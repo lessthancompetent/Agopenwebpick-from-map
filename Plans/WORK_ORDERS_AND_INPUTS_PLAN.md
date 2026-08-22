@@ -85,6 +85,33 @@ computes fills, and marks those paddocks allocated/filled — usable in either o
 The rate HUD/switchbox gains a compact selector to pick the **active input/channel** (from the work
 order's mix or the 5 channels) without opening the config panel.
 
+### Tank & metering — fill/top-up, manual estimate, back-calc calibrate
+Each product/tank carries a **metering mode** — the single distinction that keeps this from confusing
+anyone; the UI always marks an estimate `~ … (est)` and leaves measured numbers unmarked:
+- **Metered** — a flow/weigh sensor drives `TankRemaining` and the actual rate (real-time).
+- **Manual (estimated)** — no sensor: the operator enters what went **in**, sets a **target rate**, and
+  the app decrements the tank from the commanded rate each tick (`target UPM × dt` = rate × area — a
+  "software flow meter"). Shown as `~ … (est)`.
+
+- **Fill / top-up.** One gesture — **"Add to tank" (+amount)** — increments `TankRemaining` (partial
+  top-up or full), clamped to `TankSize`; never the old "overwrite the remaining" input. Applies to a
+  rate-control product's tank AND to the **tank-mix** total (the mix's carrier tank).
+- **Manual remaining estimate.** For a Manual product: add what's in the hopper, set the target rate →
+  the floater shows `~remaining` counting down as area is worked; warns amber/red as it empties.
+- **Finish → back-calc actual rate → nudge the door/cal.** At job end, enter the **actual used**
+  (weighed/measured); `actualRate = used / areaWorked` (already emitted to `coverage.geojson` via
+  `job.setApplied`). Surface **target vs actual** ("112 kg/ha, 12% over") with one **"Apply to
+  calibration"** action: scale the meter cal (metered — the existing catch-test path) or report the
+  corrected door setting (manual) and store it on the product.
+- **Tank-mix link.** The tank-mix carrier/tank volume and the rate-control product tank are the same
+  physical tank on a sprayer — fill/top-up and the remaining readout share it, so filling via the
+  tank-fill calc updates the floater remaining and vice-versa.
+
+**Shipped early (2026-08-22), ahead of the full phases:** the **`rate.set|idx,tankAdd,amount`** top-up
+command, the **manual `~est` tank decrement** (un-metered products, `target × dt`), and the **floater
+tank readout** (tap-to-top-up, `~est` label, amber/red low warning). The metering-mode toggle, the
+back-calc "Finish & calibrate" flow, and the tank-mix↔product tank unification land in Phases 1 & 3.
+
 ## Phased delivery (build in order)
 
 **Phase 0 — quick wins (low risk, addresses today's complaints):**

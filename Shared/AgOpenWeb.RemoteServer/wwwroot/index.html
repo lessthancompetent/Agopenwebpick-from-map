@@ -979,8 +979,18 @@
     #swb-secs { display: flex; flex-direction: row; gap: 4px; }
     #swb-secs button { min-width: 48px; height: 56px; padding: 0 8px; border: 0; border-radius: 6px;
       background: rgba(var(--ov),0.14); color: var(--text); font: 700 12px system-ui, sans-serif; cursor: pointer; }
-    #swb-secs button.on { background: rgba(46,204,113,0.55); color: #fff; }
-    #swb-secs button.mix { background: rgba(240,168,104,0.45); color: #fff; }
+    #swb-secs button.on { background: rgba(46,204,113,0.55); color: #fff; }        /* (legacy) */
+    #swb-secs button.auto { background: rgba(46,204,113,0.45); color: #fff; }      /* AUTO */
+    #swb-secs button.manual { background: rgba(241,196,15,0.62); color: #111; }    /* Manual ON */
+    #swb-secs button.off { background: rgba(120,120,120,0.22); color: #9aa6b2; }   /* OFF */
+    #swb-secs button.mix { background: rgba(240,168,104,0.45); color: #fff; }      /* mixed group */
+    /* volume remaining, shown just under the rate/target in the rate HUD */
+    #rh-rows .rh-tank { display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; font-size: 12px; opacity: .85; padding: 1px 2px 3px; }
+    #rh-rows .rh-tank.warn { color: #f0a868; opacity: 1; }
+    #rh-rows .rh-tank.low { color: #ff6b5b; opacity: 1; font-weight: 700; }
+    #rh-rows .rh-topup { cursor: pointer; border: 1px solid currentColor; border-radius: 5px;
+        min-width: 20px; text-align: center; padding: 0 5px; opacity: .8; }
     .rh-row { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
     .rh-name { color: var(--text-2); font: 700 12px system-ui, sans-serif;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 108px; }

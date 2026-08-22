@@ -2708,6 +2708,29 @@ function rhRender(d) {
     row.appendChild(name);
     row.appendChild(vals);
     host.appendChild(row);
+    // Volume remaining, just under the rate/target. "~ … (est)" for a manual
+    // (un-metered) product; tap "+" to top up. Status carries per-product tank + tankSize.
+    if (p.tankSize > 0 || p.tank > 0) {
+      const est = !p.connected;
+      const pct = p.tankSize > 0 ? p.tank / p.tankSize : 1;
+      const unit = (p.units || 'L').split('/')[0];
+      const tk = document.createElement('div');
+      tk.className = 'rh-tank' + (pct <= 0.10 ? ' low' : pct <= 0.25 ? ' warn' : '');
+      const lbl = document.createElement('span');
+      lbl.textContent = (est ? '~' : '') + Math.round(p.tank) + ' ' + unit + ' left' + (est ? ' (est)' : '');
+      const add = document.createElement('span');
+      add.className = 'rh-topup'; add.textContent = '+'; add.title = 'Top up tank';
+      const pi = (d.products || []).indexOf(p);
+      add.addEventListener('pointerdown', ev => {
+        ev.stopPropagation();
+        askKeypad({ title: 'Top up ' + (p.name || 'tank'), numLabel: 'Amount to ADD', units: ['L', 'kg'] }, r => {
+          if (!r || !(r.value > 0)) return;
+          transport.send('rate.set|' + pi + ',tankAdd,' + r.value);
+        });
+      });
+      tk.appendChild(lbl); tk.appendChild(add);
+      host.appendChild(tk);
+    }
     if (p.binEmpty) {
       const b = document.createElement('div');
       b.className = 'rh-bin';
@@ -2854,26 +2877,38 @@ function renderSwitchbox(d) {
         const gs = swbGroups(rcLive).find(g => g[0] === sw);
         if (!gs) return;
         const secs = (tick && tick.sections) || [];
-        const allOn = gs[1].every(i => secs[i] && secs[i].on);
+        // tick.sections is the numeric colour code per section, not an object.
+        const isOn = i => { const c = Number(secs[i] ?? 0); return c >= 1 && c <= 4; };
+        const allOn = gs[1].every(isOn);
         // one press moves the whole group to the same state
         for (const i of gs[1]) {
-          const on = !!(secs[i] && secs[i].on);
-          if (on === allOn) swbSend('section.toggle|' + i);
+          if (isOn(i) === allOn) swbSend('section.toggle|' + i);
         }
       });
       host.appendChild(b);
     }
   }
   const secs = (tick && tick.sections) || [];
+  // The switch shows only the SWITCH POSITION (Auto / Manual / Off) — what it's
+  // set to, not whether it's spraying right now (the bottom section bar + tractor
+  // icon show live application). Derive the button state from the colour code:
+  // 0=Off, 1=Manual-On, 2..5=any Auto state.
+  const btnState = c => c === 0 ? 'off' : c === 1 ? 'manual' : 'auto';
   let bi = 0;
   for (const [sw, members] of groups) {
     const b = host.children[bi++];
     if (!b) break;
-    const on = members.filter(i => secs[i] && secs[i].on).length;
+    const states = members.map(i => btnState(Number(secs[i] ?? 0)));
+    const uniq = [...new Set(states)];
+    const st = uniq.length === 1 ? uniq[0] : 'mix';
     b.textContent = 'S' + (sw + 1) + (members.length > 1 ? ' (' + members.length + ')' : '');
-    b.title = 'sections ' + members.map(i => i + 1).join(', ');
-    b.classList.toggle('on', on === members.length && on > 0);
-    b.classList.toggle('mix', on > 0 && on < members.length);
+    b.title = 'sections ' + members.map(i => i + 1).join(', ') + ' — ' +
+      (st === 'off' ? 'OFF' : st === 'manual' ? 'Manual ON' : st === 'auto' ? 'AUTO' : 'mixed');
+    b.classList.toggle('auto', st === 'auto');
+    b.classList.toggle('manual', st === 'manual');
+    b.classList.toggle('off', st === 'off');
+    b.classList.toggle('mix', st === 'mix');
+    b.classList.remove('on', 'armed');   // no live-spraying colour on the switch itself
   }
 }
 document.getElementById('swb-mst').addEventListener('pointerdown', e => {

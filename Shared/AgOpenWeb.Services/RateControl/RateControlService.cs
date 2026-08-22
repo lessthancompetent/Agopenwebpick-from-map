@@ -418,6 +418,23 @@ public sealed class RateControlService : IRateControlService, IDisposable
                 double target = p.TargetUpm(activeHaPerMin, totalHaPerMin);
                 if (target > 0 && p.MinUpm > 0 && target < p.MinUpm) target = p.MinUpm;
 
+                // Manual / un-metered product (no module reporting flow): there is no
+                // sensor to count what actually went out, so ESTIMATE it from the
+                // commanded rate — target (units/min) × dt = units this tick (which is
+                // rate × area). This decrements the tank so a manual spreader/sprayer
+                // still shows an estimated remaining (surfaced as "~ … est" in the UI).
+                // A connected module owns the real count, so we never estimate then.
+                if (!p.ModuleConnected && target > 0 && dtMin > 0)
+                {
+                    lock (_ioLock)
+                    {
+                        double used = target * dtMin;
+                        p.QuantityApplied += used;
+                        if (p.TankRemaining > 0) p.TankRemaining = Math.Max(0, p.TankRemaining - used);
+                    }
+                    _dirty = true;
+                }
+
                 bool reset;
                 lock (_ioLock) { reset = p.ResetQuantityPending; p.ResetQuantityPending = false; }
 
@@ -614,6 +631,12 @@ public sealed class RateControlService : IRateControlService, IDisposable
                 case "minUpm": p.MinUpm = Math.Max(0, D()); break;
                 case "tankSize": p.TankSize = Math.Max(0, D()); break;
                 case "tankRemaining": p.TankRemaining = Math.Max(0, D()); break;
+                // Top-up: ADD to what's in the tank (partial refill or full), rather
+                // than overwrite. Clamped to the tank's capacity when one is set.
+                case "tankAdd":
+                    p.TankRemaining = Math.Max(0, p.TankRemaining + D());
+                    if (p.TankSize > 0) p.TankRemaining = Math.Min(p.TankRemaining, p.TankSize);
+                    break;
                 case "auto": p.AutoOn = B(); break;
                 case "manualPwm": p.ManualPwm = Math.Clamp((int)D(), -255, 255); break;
                 case "units": p.Units = value.Trim(); break;
