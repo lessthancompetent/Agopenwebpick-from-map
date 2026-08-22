@@ -87,8 +87,14 @@ public class SweptPathClearanceTests
         TestContext.Out.WriteLine($"worst intrusion: blind={blindWorst:F2} m, swept-aware={sweptWorst:F2} m");
         Assert.That(sweptWorst, Is.LessThanOrEqualTo(0.05),
             "swept-aware turns must keep the implement body inside the hard fence");
-        Assert.That(blindWorst, Is.GreaterThan(2.0),
-            "the check must actually bite — the blind planner swings the body >2 m past the margin");
+        // The check must actually bite. Without swept awareness the long body swings well
+        // past the fence margin; the swept-aware planner pulls it far inside. (The turn
+        // lead-in feature reshapes the blind arc, so assert the IMPROVEMENT the swept check
+        // delivers — robust to the exact blind geometry — plus that blind clearly intrudes.)
+        Assert.That(blindWorst, Is.GreaterThan(1.5),
+            "the blind planner swings the body well past the margin");
+        Assert.That(blindWorst - sweptWorst, Is.GreaterThan(2.0),
+            "the swept-aware planner keeps the body far clearer than the blind one");
     }
 
     [Test]

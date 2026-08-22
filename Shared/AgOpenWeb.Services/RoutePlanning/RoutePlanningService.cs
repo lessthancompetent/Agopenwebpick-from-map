@@ -322,10 +322,24 @@ public sealed class RoutePlanningService : IRoutePlanningService
         }
         if (ordered.Count == 0) return null;
 
+        // Turn lead-in/out: pull each inter-pass U-turn OFF the application edge, deeper
+        // into the reserved headland, so the tractor+trailed tool are settled straight on
+        // the line before the worked pass resumes AND drive straight out past the pass end
+        // before the turn curves away (both ends — symmetric). Tool-up connector runs, no
+        // coverage. Budget = the headland depth left over after the trailing-tool extension
+        // (ext), the fence clearance, and the room the U-turn bulb itself needs (~radius),
+        // capped at one turn radius and floored at 0 so a tight headland simply keeps
+        // today's edge-to-edge turn. Computed from GenerateBoustrophedon's own params so
+        // the auto-orientation trial and the built plan derive the identical value.
+        double turnLeadIn = turnRadius > 0.01
+            ? Math.Max(0.0, Math.Min(turnRadius,
+                headlandMargin - Math.Max(0, passEndExtension) - Math.Max(0, boundaryClearance) - turnRadius))
+            : 0.0;
+
         // fastScore: the passes are still split around obstacles (accurate pass/turn
         // counts for comparing candidate orientations), but the expensive obstacle
         // reroute/smoothing, pond loops and transit-gap fixing are skipped.
-        var plan = Assemble(ordered, boundary, swathWidth, headlandPasses, startPos, startOppositeSide, turnRadius, boundaryClearance, cornerRadius, fastScore ? null : holes, rawHoles: innerBoundaries);
+        var plan = Assemble(ordered, boundary, swathWidth, headlandPasses, startPos, startOppositeSide, turnRadius, boundaryClearance, cornerRadius, fastScore ? null : holes, entryRunIn: turnLeadIn, rawHoles: innerBoundaries);
         if (fastScore || plan == null) return plan;
 
         // Small obstacles: swerve every leg (swaths included) around the physical-width
@@ -1761,27 +1775,65 @@ public sealed class RoutePlanningService : IRoutePlanningService
 
             if (prevExit.HasValue)
             {
-                // Straighten-up run (the cross-drill weave): the connector targets a
-                // pose pulled back along the entry heading, then runs the last
-                // entryRunIn metres STRAIGHT — the trailed tool settles true behind
-                // the tractor inside the turn (tool up), not on the worked leg.
-                var target = poly[0];
-                List<Vec3>? runIn = null;
+                // Symmetric straighten-up runs so the U-turn sits DEEPER in the reserved
+                // headland (off the application edge) and the tractor+trailed tool are
+                // settled straight both LEAVING and ENTERING the worked leg — tool up, so
+                // no coverage (Turn segments are excluded from the worked/coverage model):
+                //  • run-OUT: continue straight along the EXIT heading past the pass end,
+                //    pushing the turn's START into the headland;
+                //  • run-IN:  arrive straight along the next pass's ENTRY heading, pushing
+                //    the turn's END into the headland (the original pulled-target trick).
+                var origSrc = prevExit.Value;   // worked-pass exit pose (heading = drive-out)
+                var origTgt = poly[0];          // next worked-pass entry pose
+                var src = origSrc;
+                var target = origTgt;
+                List<Vec3>? runOut = null, runIn = null;
                 if (entryRunIn > 0.01)
                 {
+                    var pushed = new Vec3(
+                        origSrc.Easting + Math.Sin(origSrc.Heading) * entryRunIn,
+                        origSrc.Northing + Math.Cos(origSrc.Heading) * entryRunIn,
+                        origSrc.Heading);
+                    runOut = new List<Vec3> { origSrc, pushed };
+                    src = pushed;
+
                     var pulled = new Vec3(
-                        target.Easting - Math.Sin(target.Heading) * entryRunIn,
-                        target.Northing - Math.Cos(target.Heading) * entryRunIn,
-                        target.Heading);
-                    runIn = new List<Vec3> { pulled, target };
+                        origTgt.Easting - Math.Sin(origTgt.Heading) * entryRunIn,
+                        origTgt.Northing - Math.Cos(origTgt.Heading) * entryRunIn,
+                        origTgt.Heading);
+                    runIn = new List<Vec3> { pulled, origTgt };
                     target = pulled;
                 }
-                var turn = BuildTurn(prevExit.Value, target, turnRadius, turnLimit, holes, swept: swept);
-                if (turn.Count < 2 && runIn != null)
-                    turn = new List<Vec3> { prevExit.Value, target };
+                var turn = BuildTurn(src, target, turnRadius, turnLimit, holes, swept: swept);
+                if (turn.Count < 2)
+                {
+                    // No valid arc reaches the pushed/pulled poses → fall back to a plain
+                    // connector between the ORIGINAL pass endpoints (today's behaviour);
+                    // never emit a bad path just to keep the lead-in.
+                    turn = (runOut != null || runIn != null)
+                        ? new List<Vec3> { origSrc, origTgt }
+                        : turn;
+                }
+                else
+                {
+                    if (runOut != null) turn.Insert(0, origSrc);   // prevExit → pushed (straight)
+                    if (runIn != null) turn.Add(origTgt);          // pulled → entry pose (straight)
+                }
                 if (turn.Count >= 2)
                 {
-                    if (runIn != null) turn.AddRange(runIn);
+                    // Hard-fence swept guard: the fence-ward lead-in/out shortens the
+                    // standoff, so a long implement BODY can swing past a HARD fence even
+                    // though BuildTurn cleared the bare arc (and the appended straight runs
+                    // are not themselves swept-checked). If the full connector's swept body
+                    // intrudes, drop the lead-in and fall back to the plain swept-validated
+                    // turn between the true pass endpoints (BuildTurn picks the
+                    // least-intruding arc). Soft fences don't enforce the body, so the
+                    // lead-in stands there.
+                    if ((runOut != null || runIn != null) && swept != null && !SweptClear(turn, swept))
+                    {
+                        var plain = BuildTurn(origSrc, origTgt, turnRadius, turnLimit, holes, swept: swept);
+                        if (plain.Count >= 2) turn = plain;
+                    }
                     interior.Add(new RouteSegment(RouteSegmentType.Turn, turn));
                     totalDist += PolylineLength(turn);
                 }
