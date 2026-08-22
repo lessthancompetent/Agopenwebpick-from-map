@@ -156,7 +156,13 @@ public class GeoJsonFieldService
                 case FeatureRoles.OuterBoundary:
                     boundary.OuterBoundary = ReadBoundaryPolygon(geo, feature);
                     if (boundary.OuterBoundary != null)
+                    {
                         boundary.OuterBoundary.IsHard = GetBoolProp(feature, FieldPropertyKeys.IsHard);
+                        // Coverage axis. Absent on legacy fields ⇒ true (stop coverage at the
+                        // outer edge, as every field did before the flag existed).
+                        boundary.OuterBoundary.StopCoverageAtEdge =
+                            GetBoolPropDefault(feature, FieldPropertyKeys.StopCoverageAtEdge, true);
+                    }
                     break;
 
                 case FeatureRoles.InnerBoundary:
@@ -165,6 +171,10 @@ public class GeoJsonFieldService
                     {
                         inner.IsDriveThrough = GetBoolProp(feature, FieldPropertyKeys.IsDriveThrough);
                         inner.IsHard = GetBoolProp(feature, FieldPropertyKeys.IsHard);
+                        // Coverage axis. Absent on legacy inners ⇒ !isDriveThrough: a
+                        // non-drive-through hole already stopped coverage today.
+                        inner.StopCoverageAtEdge = GetBoolPropDefault(
+                            feature, FieldPropertyKeys.StopCoverageAtEdge, !inner.IsDriveThrough);
                         boundary.InnerBoundaries.Add(inner);
                     }
                     break;
@@ -233,6 +243,7 @@ public class GeoJsonFieldService
                 [FieldPropertyKeys.Role] = role,
                 [FieldPropertyKeys.IsDriveThrough] = polygon.IsDriveThrough,
                 [FieldPropertyKeys.IsHard] = polygon.IsHard,
+                [FieldPropertyKeys.StopCoverageAtEdge] = polygon.StopCoverageAtEdge,
                 [FieldPropertyKeys.AreaHectares] = polygon.AreaHectares,
             }
         };

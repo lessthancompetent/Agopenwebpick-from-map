@@ -6314,19 +6314,27 @@ function renderBoundaryMenu() {
   for (const it of items) {
     const row = document.createElement('div');
     row.className = 'bm-row' + (b && it.index === b.selectedIndex ? ' sel' : '');
+    // Coverage flag: default true = "Stop" (coverage stops at the edge). The notable
+    // state is false = "Spread" (product allowed beyond, e.g. broadcast over a fence),
+    // so highlight 'on' when it's OFF.
     row.innerHTML = '<span class="bm-name"></span><span class="bm-area"></span>'
       + '<span class="bm-flag ' + (it.driveThru ? 'on' : 'off') + '" data-flag="driveThru"></span>'
-      + '<span class="bm-flag ' + (it.hard ? 'on' : 'off') + '" data-flag="hard"></span>';
+      + '<span class="bm-flag ' + (it.hard ? 'on' : 'off') + '" data-flag="hard"></span>'
+      + '<span class="bm-flag ' + (it.stopCoverage ? 'off' : 'on') + '" data-flag="stopCoverage"></span>';
     row.querySelector('.bm-name').textContent = it.boundaryType;
     row.querySelector('.bm-area').textContent = it.areaDisplay;
     row.querySelector('[data-flag="driveThru"]').textContent = it.driveThru ? 'Yes' : '--';
     row.querySelector('[data-flag="hard"]').textContent = it.hard ? 'Hard' : 'Soft';
+    row.querySelector('[data-flag="stopCoverage"]').textContent = it.stopCoverage ? 'Stop' : 'Spread';
     row.addEventListener('pointerdown', ev => { ev.stopPropagation(); transport.send('boundary.select|' + it.index); });
     row.querySelector('[data-flag="driveThru"]').addEventListener('pointerdown', ev => {
       ev.stopPropagation(); transport.send('boundary.select|' + it.index); transport.send('boundary.driveThru');
     });
     row.querySelector('[data-flag="hard"]').addEventListener('pointerdown', ev => {
       ev.stopPropagation(); transport.send('boundary.select|' + it.index); transport.send('boundary.hard');
+    });
+    row.querySelector('[data-flag="stopCoverage"]').addEventListener('pointerdown', ev => {
+      ev.stopPropagation(); transport.send('boundary.select|' + it.index); transport.send('boundary.stopCoverage');
     });
     list.appendChild(row);
   }

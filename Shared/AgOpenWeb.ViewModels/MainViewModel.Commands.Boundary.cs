@@ -836,6 +836,60 @@ public partial class MainViewModel
                 }
             }
         });
+
+        // Coverage axis (independent of hard/physical): when OFF, product coverage is
+        // allowed to extend beyond this boundary — e.g. a broadcast spreader throwing over
+        // a fence or down a hillside. Default ON (stop coverage at the edge, as today).
+        ToggleStopCoverageCommand = new RelayCommand(() =>
+        {
+            if (SelectedBoundaryIndex < 0)
+            {
+                StatusMessage = "Select a boundary first";
+                return;
+            }
+
+            if (string.IsNullOrEmpty(CurrentFieldName)) return;
+
+            var fieldPath = Path.Combine(_settingsService.Settings.FieldsDirectory, CurrentFieldName);
+            // Toggle the ACTIVE in-memory boundary (see ToggleDriveThroughCommand).
+            var boundary = ActiveField?.Boundary ?? _boundaryFileService.LoadBoundary(fieldPath);
+            if (boundary == null) return;
+
+            int currentIndex = 0;
+
+            if (boundary.OuterBoundary != null && boundary.OuterBoundary.IsValid)
+            {
+                if (currentIndex == SelectedBoundaryIndex)
+                {
+                    boundary.OuterBoundary.StopCoverageAtEdge = !boundary.OuterBoundary.StopCoverageAtEdge;
+                    _boundaryFileService.SaveBoundary(boundary, fieldPath);
+                    PersistBoundaryGeoJson();
+                    SetCurrentBoundary(boundary);
+                    RefreshBoundaryList();
+                    StatusMessage = $"Outer boundary stop-coverage-at-edge: {(boundary.OuterBoundary.StopCoverageAtEdge ? "On" : "Off")}";
+                    return;
+                }
+                currentIndex++;
+            }
+
+            for (int i = 0; i < boundary.InnerBoundaries.Count; i++)
+            {
+                if (boundary.InnerBoundaries[i].IsValid)
+                {
+                    if (currentIndex == SelectedBoundaryIndex)
+                    {
+                        boundary.InnerBoundaries[i].StopCoverageAtEdge = !boundary.InnerBoundaries[i].StopCoverageAtEdge;
+                        _boundaryFileService.SaveBoundary(boundary, fieldPath);
+                        PersistBoundaryGeoJson();
+                        SetCurrentBoundary(boundary);
+                        RefreshBoundaryList();
+                        StatusMessage = $"Inner {i + 1} stop-coverage-at-edge: {(boundary.InnerBoundaries[i].StopCoverageAtEdge ? "On" : "Off")}";
+                        return;
+                    }
+                    currentIndex++;
+                }
+            }
+        });
     }
 
     /// <summary>

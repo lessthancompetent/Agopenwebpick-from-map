@@ -184,8 +184,22 @@ public class BoundaryPolygon
     /// at this edge, so the implement's swept path must not cross it during a
     /// U-turn. Soft boundaries (default) allow the implement to swing close, as
     /// today. Used by the U-turn clearance check to keep the implement clear.
+    /// This is the PHYSICAL axis (uses the physical frame width); independent of
+    /// <see cref="StopCoverageAtEdge"/>, the coverage axis.
     /// </summary>
     public bool IsHard { get; set; } = false;
+
+    /// <summary>
+    /// COVERAGE axis: when true, section control turns sections off where the
+    /// SWATH crosses this boundary (product application stops at the edge), using
+    /// the working/spread width. When false, coverage is allowed to extend beyond
+    /// this boundary — e.g. a broadcast spreader throwing product over a fence or
+    /// down a hillside the machine can't drive onto. Independent of
+    /// <see cref="IsHard"/> (the physical axis): a boundary can stop the metal
+    /// (IsHard) while still letting the spread fly over it (StopCoverageAtEdge=false).
+    /// Defaults true so existing fields keep stopping coverage at their edge.
+    /// </summary>
+    public bool StopCoverageAtEdge { get; set; } = true;
 
     /// <summary>
     /// Area in square meters (calculated from points)

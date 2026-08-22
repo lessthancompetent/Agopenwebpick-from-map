@@ -120,9 +120,16 @@ public class Boundary
         if (OuterBoundary == null || !OuterBoundary.IsValid)
             return BoundaryResult.FullyInside; // No boundary = always in
 
-        var outerResult = OuterBoundary.GetSegmentBoundaryStatus(sectionCenter, heading, halfWidth);
+        // COVERAGE axis: the OUTER edge stops coverage only when its StopCoverageAtEdge is
+        // set (default). When off — e.g. a broadcast spreader throwing product over a fence
+        // or down a hillside the machine can't reach — the outer edge is treated as
+        // fully-inside for coverage, so the spread extends beyond it (inner holes below still
+        // apply). The physical "keep the metal inside" is IsHard, handled elsewhere.
+        var outerResult = OuterBoundary.StopCoverageAtEdge
+            ? OuterBoundary.GetSegmentBoundaryStatus(sectionCenter, heading, halfWidth)
+            : BoundaryResult.FullyInside;
 
-        // If fully outside outer boundary, we're done
+        // If fully outside a gating outer boundary, we're done
         if (outerResult.IsFullyOutside)
             return outerResult;
 
@@ -131,7 +138,10 @@ public class Boundary
 
         foreach (var innerBoundary in InnerBoundaries)
         {
-            if (innerBoundary.IsDriveThrough) continue; // Skip drive-through boundaries
+            // Sprayed/covered THROUGH: a drive-through hole (planner routing), or one whose
+            // coverage axis is turned off (cover over it). Otherwise the inside portion is
+            // excluded from coverage.
+            if (innerBoundary.IsDriveThrough || !innerBoundary.StopCoverageAtEdge) continue;
 
             var innerResult = innerBoundary.GetSegmentBoundaryStatus(sectionCenter, heading, halfWidth);
 

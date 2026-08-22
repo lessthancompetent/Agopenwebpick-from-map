@@ -969,6 +969,7 @@ public static partial class RemoteServerWiring
                                 "boundary.delete" => vm.DeleteBoundaryCommand,
                                 "boundary.driveThru" => vm.ToggleDriveThroughCommand,
                                 "boundary.hard" => vm.ToggleHardCommand,
+                                "boundary.stopCoverage" => vm.ToggleStopCoverageCommand,
                                 "boundary.importKml" => vm.ImportKmlBoundaryCommand,
                                 "boundary.buildFromTracks" => vm.BuildFromTracksCommand,
                                 "boundary.driveAround" => vm.DriveAroundFieldCommand,
@@ -1153,7 +1154,7 @@ public static partial class RemoteServerWiring
                         var items = new System.Collections.Generic.List<AgOpenWeb.RemoteServer.BoundaryItemDto>();
                         foreach (var it in vm.BoundaryItems)
                             items.Add(new AgOpenWeb.RemoteServer.BoundaryItemDto(
-                                it.Index, it.BoundaryType, it.AreaDisplay, it.IsDriveThrough, it.IsHard));
+                                it.Index, it.BoundaryType, it.AreaDisplay, it.IsDriveThrough, it.IsHard, it.StopCoverageAtEdge));
                         var bpts = new System.Collections.Generic.List<double>(brs.RecordedPoints.Count * 2);
                         foreach (var p in brs.RecordedPoints) { bpts.Add(p.Easting); bpts.Add(p.Northing); }
                         return new AgOpenWeb.RemoteServer.BoundaryDto(

@@ -149,13 +149,22 @@ public class BoundaryFileService
 
         if (line == null) return null;
 
-        // AgOpenWeb-specific hard-boundary marker (optional, labeled).
-        if (line.Trim().Equals("hard", StringComparison.OrdinalIgnoreCase))
+        // AgOpenWeb-specific labeled markers (optional, any order): "hard" (physical
+        // axis) and "nocoverage" (coverage axis off — spread is wanted beyond this edge).
+        // Labeled so they can't be confused with the bool/count lines and stay compatible
+        // with AgOpen import.
+        while (line != null)
         {
-            polygon.IsHard = true;
+            string tag = line.Trim();
+            if (tag.Equals("hard", StringComparison.OrdinalIgnoreCase))
+                polygon.IsHard = true;
+            else if (tag.Equals("nocoverage", StringComparison.OrdinalIgnoreCase))
+                polygon.StopCoverageAtEdge = false;
+            else
+                break;
             line = reader.ReadLine();
-            if (line == null) return null;
         }
+        if (line == null) return null;
 
         // Read point count
         if (!int.TryParse(line.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int count))
@@ -236,6 +245,11 @@ public class BoundaryFileService
         // with the bool/count lines and stays compatible with AgOpen import).
         if (polygon.IsHard)
             writer.WriteLine("hard");
+
+        // AgOpenWeb-specific coverage-axis marker. StopCoverageAtEdge defaults true, so
+        // only the non-default (cover/spread beyond this edge) is recorded.
+        if (!polygon.StopCoverageAtEdge)
+            writer.WriteLine("nocoverage");
 
         // Write point count
         writer.WriteLine(polygon.Points.Count.ToString(CultureInfo.InvariantCulture));

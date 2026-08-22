@@ -1111,5 +1111,52 @@ public class LookAheadSlitTests
             "a headland pass must not activate sections when Off-in-headland is on");
     }
 
+    // --- Two-axis boundary: outer-edge coverage gate (StopCoverageAtEdge) ---
+
+    /// <summary>
+    /// Default (StopCoverageAtEdge = true): drive a 3×2 m boom straddling the outer
+    /// east fence at E=200 (tool centre 198 → boom E[195,201], section 2 = E[199,201]
+    /// half outside). The straddling section is forced off at the fence, so nothing
+    /// paints past the line; the fully-inside field sections keep painting.
+    /// </summary>
+    [Test]
+    public void OuterFence_StopCoverageOn_NoPaintPastEdge()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpField(); // outer boundary [0,200]×[0,200]; StopCoverageAtEdge defaults true
+
+        double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
+        DriveNorth(198.0, ref lat, 15.0, 200);
+
+        Assert.That(_coverage.IsPointCovered(196.0, 80), Is.True,
+            "fully-inside field section must paint");
+        Assert.That(_coverage.IsPointCovered(200.5, 80), Is.False,
+            "coverage must stop at the outer edge when StopCoverageAtEdge is on");
+    }
+
+    /// <summary>
+    /// StopCoverageAtEdge = false on the outer boundary (broadcast-beyond case, e.g. a
+    /// spreader throwing product over a fence or down a hillside): the same straddling
+    /// boom keeps the outer edge from gating coverage, so section 2 stays active and
+    /// paints past the line.
+    /// </summary>
+    [Test]
+    public void OuterFence_StopCoverageOff_PaintsPastEdge()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpField();
+        _appState.Field.CurrentBoundary!.OuterBoundary!.StopCoverageAtEdge = false;
+
+        double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
+        DriveNorth(198.0, ref lat, 15.0, 200);
+
+        Assert.That(_coverage.IsPointCovered(196.0, 80), Is.True,
+            "fully-inside field section must still paint");
+        Assert.That(_coverage.IsPointCovered(200.5, 80), Is.True,
+            "coverage must extend beyond the outer edge when StopCoverageAtEdge is off");
+    }
+
     #endregion
 }

@@ -94,6 +94,7 @@ public static class FieldPropertyKeys
     public const string IsVisible = "isVisible";
     public const string IsDriveThrough = "isDriveThrough";
     public const string IsHard = "isHard";
+    public const string StopCoverageAtEdge = "stopCoverageAtEdge";
     public const string OriginLatitude = "originLatitude";
     public const string OriginLongitude = "originLongitude";
     public const string Convergence = "convergence";

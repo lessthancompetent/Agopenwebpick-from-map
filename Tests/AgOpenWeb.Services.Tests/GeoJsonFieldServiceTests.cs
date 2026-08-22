@@ -328,6 +328,71 @@ public class GeoJsonFieldServiceTests
         Assert.That(fieldService.FieldExists(_tempDir), Is.True);
     }
 
+    [Test]
+    public void SaveAndLoad_CoverageAxisFlags_SurviveRoundTrip()
+    {
+        var field = CreateTestField();
+        var outer = CreateSquarePolygon(0, 0, 200);
+        outer.IsHard = true;              // physical axis
+        outer.StopCoverageAtEdge = false; // coverage axis: spread beyond the edge
+        var inner = CreateSquarePolygon(50, 50, 30);
+        inner.IsDriveThrough = true;
+        inner.StopCoverageAtEdge = false;
+        field.Boundary = new Boundary
+        {
+            OuterBoundary = outer,
+            InnerBoundaries = new List<BoundaryPolygon> { inner }
+        };
+
+        GeoJsonFieldService.Save(field, tracks: null);
+        var (loaded, _) = GeoJsonFieldService.Load(_tempDir);
+
+        Assert.That(loaded.Boundary!.OuterBoundary!.IsHard, Is.True, "IsHard must survive");
+        Assert.That(loaded.Boundary.OuterBoundary.StopCoverageAtEdge, Is.False,
+            "outer StopCoverageAtEdge must survive independently of IsHard");
+        Assert.That(loaded.Boundary.InnerBoundaries[0].StopCoverageAtEdge, Is.False,
+            "inner StopCoverageAtEdge must survive");
+    }
+
+    [Test]
+    public void Load_LegacyFieldMissingCoverageFlag_MigratesByDriveThrough()
+    {
+        var field = CreateTestField();
+        var innerThrough = CreateSquarePolygon(50, 50, 30);
+        innerThrough.IsDriveThrough = true;  // drive-through hole → migrates to false
+        var innerSolid = CreateSquarePolygon(120, 120, 20);
+        innerSolid.IsDriveThrough = false;   // solid hole → migrates to true
+        field.Boundary = new Boundary
+        {
+            OuterBoundary = CreateSquarePolygon(0, 0, 200),
+            InnerBoundaries = new List<BoundaryPolygon> { innerThrough, innerSolid }
+        };
+        GeoJsonFieldService.Save(field, tracks: null);
+        StripStopCoverageProperty(); // simulate a field written before the flag existed
+
+        var (loaded, _) = GeoJsonFieldService.Load(_tempDir);
+
+        Assert.That(loaded.Boundary!.OuterBoundary!.StopCoverageAtEdge, Is.True,
+            "legacy outer migrates to stop-coverage=true");
+        var through = loaded.Boundary.InnerBoundaries.Single(b => b.IsDriveThrough);
+        var solid = loaded.Boundary.InnerBoundaries.Single(b => !b.IsDriveThrough);
+        Assert.That(through.StopCoverageAtEdge, Is.False,
+            "legacy drive-through hole migrates to stop-coverage=false (sprayed through)");
+        Assert.That(solid.StopCoverageAtEdge, Is.True,
+            "legacy solid hole migrates to stop-coverage=true");
+    }
+
+    // Remove the stopCoverageAtEdge property from every feature to mimic a field
+    // saved before the flag existed, exercising the read-side migration defaults.
+    private void StripStopCoverageProperty()
+    {
+        var path = Path.Combine(_tempDir, "field.geojson");
+        var root = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        foreach (var f in root["features"]!.AsArray())
+            f?["properties"]?.AsObject().Remove("stopCoverageAtEdge");
+        File.WriteAllText(path, root.ToJsonString());
+    }
+
     // ---------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------
