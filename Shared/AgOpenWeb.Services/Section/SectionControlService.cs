@@ -433,9 +433,23 @@ public class SectionControlService : ISectionControlService
         var headlandOffCheckPoint = LookAheadPoint(sectionCenter, toolHeading, headlandOffLookAhead, speed, sectionLateral);
 
         _sectionSw.Restart();
-        bool isInHeadland = IsPointInHeadland(sectionCenter);
-        bool lookOnInHeadland = IsPointInHeadland(headlandOnCheckPoint);
-        bool lookOffInHeadland = IsPointInHeadland(headlandOffCheckPoint);
+        // Edge-aware headland test (bug A): a section counts as "in headland" only when
+        // its WHOLE swath is in the band, so a section straddling the headland line
+        // stays ON and paints its field half right up to the line — matching the
+        // swath-based boundary check instead of the crude single-centre-point test that
+        // cut the section ~half its width short of the line on a side-headland pass.
+        // Uses the section's own edge offset (from GetSectionWorldPosition) applied to
+        // the current position and each look-ahead sample point. For a pass PERPENDICULAR
+        // to the headland the swath is parallel to the line and both edges cross together,
+        // so this is identical to the old centre test — only angled/side passes change.
+        double edgeOffE = rightEdge.Easting - sectionCenter.Easting;
+        double edgeOffN = rightEdge.Northing - sectionCenter.Northing;
+        bool SegmentInHeadland(Vec2 c) =>
+            IsPointInHeadland(new Vec2(c.Easting - edgeOffE, c.Northing - edgeOffN))
+            && IsPointInHeadland(new Vec2(c.Easting + edgeOffE, c.Northing + edgeOffN));
+        bool isInHeadland = SegmentInHeadland(sectionCenter);
+        bool lookOnInHeadland = SegmentInHeadland(headlandOnCheckPoint);
+        bool lookOffInHeadland = SegmentInHeadland(headlandOffCheckPoint);
         _totalHeadlandMs += _sectionSw.Elapsed.TotalMilliseconds;
 
         // Bitmap-based coverage check is O(width / cellSize) bit reads per section

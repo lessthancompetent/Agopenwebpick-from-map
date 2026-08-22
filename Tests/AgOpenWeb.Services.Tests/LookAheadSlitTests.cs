@@ -1028,4 +1028,46 @@ public class LookAheadSlitTests
     }
 
     #endregion
+
+    #region Headland side-pass edge accuracy (bug A #2)
+
+    /// <summary>
+    /// Drive NORTH along an EAST-side headland whose line sits at easting 185
+    /// (15 m inset). With 3×2 m sections at tool-centre 183.5, the east section
+    /// spans E[184.5,186.5]: its west half (184.5–185) is cultivated field, its
+    /// east half (185–186.5) is the headland band. Testing the section CENTRE
+    /// (185.5, in the band) wrongly declares the whole section "in headland" and
+    /// leaves the field half unsprayed — a ~half-section gap inboard of the line.
+    /// The section must paint its field half up to the line.
+    /// </summary>
+    [Test]
+    public void SidePass_SectionStraddlingHeadlandLine_PaintsFieldHalfUpToLine()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpField();
+        _appState.Field.HeadlandLine = new List<Vec3>
+        {
+            new(15, 15, 0), new(185, 15, 0), new(185, 185, 0), new(15, 185, 0)
+        };
+        _appState.FieldTools.IsHeadlandOn = true;
+        ConfigurationStore.Instance.Tool.IsHeadlandSectionControl = true;
+        _sectionControl.SetAllAuto();
+
+        double toolCenter = 183.5; // east section spans E[184.5,186.5], centre 185.5 (band)
+        double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
+        DriveNorth(toolCenter, ref lat, 15.0, 200); // N ≈ 30 → 113, inside the cultivated N range
+
+        // Control: a point well inside the field (section 0) paints normally.
+        Assert.That(_coverage.IsPointCovered(181.0, 80), Is.True,
+            "an interior section should paint normally");
+
+        // The bug: the FIELD half of the straddling east section (E=184.9, just
+        // inboard of the line at 185, beyond section 1's reach) must be covered —
+        // not left as a gap inboard of the line.
+        Assert.That(_coverage.IsPointCovered(184.9, 80), Is.True,
+            "section straddling the headland line must paint its field half up to the line");
+    }
+
+    #endregion
 }
