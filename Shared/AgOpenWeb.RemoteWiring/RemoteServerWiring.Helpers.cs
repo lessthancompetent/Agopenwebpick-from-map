@@ -18,6 +18,12 @@ public static partial class RemoteServerWiring
         "track.createFromBoundary", "track.boundaryCurve", "track.boundaryCurveSeg",
         "track.boundarySegExtend", "track.allEdges",
         "track.setVisible", "track.toggleRecPaths", "track.editSave",
+        // Route Planner reference-track setup: plot an AB from two map taps and pick
+        // which hand-made track to plan along. Both are planning/selection (they create
+        // or select a guidance LINE, never engage steering — autosteer.* stays gated), so
+        // they must work for an Observer client too. Without these the plot-A-B and
+        // "plan along track" flows silently drop when the client isn't the seat holder.
+        "track.abFromPoints", "track.select",
     };
 
     // Field Builder headland *building* is field-data editing (done while reviewing the

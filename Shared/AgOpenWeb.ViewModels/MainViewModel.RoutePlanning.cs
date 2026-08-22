@@ -859,6 +859,21 @@ public partial class MainViewModel
         _currentRoutePlan = null;
         _routeLayers.Clear();
         _crossFamilyBHeadingRad = null;
+        // Drop the plan's registered "Route *" steer tracks. RegisterRouteSteerTracks
+        // only prunes them on the NEXT plan, so without this a clear leaves "Route
+        // Headland"/"Route Main"/… in the Tracks list — still visible and selectable —
+        // and the route looks like it never cleared. Deactivate first if one of them is
+        // the active guidance line (SelectedTrack = null clears the map track + guidance).
+        if (SelectedTrack != null && SelectedTrack.Name.StartsWith("Route ", StringComparison.Ordinal))
+            SelectedTrack = null;
+        bool removedTrack = false;
+        for (int i = SavedTracks.Count - 1; i >= 0; i--)
+            if (SavedTracks[i].Name.StartsWith("Route ", StringComparison.Ordinal))
+            {
+                SavedTracks.RemoveAt(i);
+                removedTrack = true;
+            }
+        if (removedTrack) SaveTracksToFile();
         SaveRoutePlanToField();   // empty layers → deletes the saved plan
         StatusMessage = "Route cleared";
     }
