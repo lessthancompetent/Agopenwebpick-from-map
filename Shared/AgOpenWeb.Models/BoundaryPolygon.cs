@@ -165,14 +165,13 @@ public class BoundaryPolygon
                northing < _minNorthing - margin || northing > _maxNorthing + margin;
     }
 
-    /// <summary>
-    /// Check if point is definitely inside the bounding box with margin (potential fast accept)
-    /// </summary>
-    private bool IsDeepInsideBounds(double easting, double northing, double margin)
+    /// <summary>True if any boundary edge lies within <paramref name="radius"/> of
+    /// the point (spatial-index test against the POLYGON, not the bounding box).</summary>
+    private bool AnySegmentWithin(double easting, double northing, double radius)
     {
-        if (_boundsDirty) UpdateBounds();
-        return easting > _minEasting + margin && easting < _maxEasting - margin &&
-               northing > _minNorthing + margin && northing < _maxNorthing - margin;
+        foreach (int _ in GetNearbySegments(easting, northing, radius))
+            return true;
+        return false;
     }
 
     /// <summary>
@@ -272,17 +271,34 @@ public class BoundaryPolygon
         if (Points.Count < 3)
             return BoundaryResult.FullyInside; // No boundary = always inside
 
-        // FAST PATH: If section center is deep inside bounding box (50m+ from any edge),
-        // skip expensive polygon intersection tests - we're definitely fully inside
-        const double DEEP_INSIDE_MARGIN = 50.0; // meters from bounding box edge
-        if (IsDeepInsideBounds(sectionCenter.Easting, sectionCenter.Northing, DEEP_INSIDE_MARGIN + halfWidth))
+        // FAST PATH: shortcut only when NO boundary edge lies near the section, so
+        // the whole swath is unambiguously on one side. Keyed on the POLYGON (via the
+        // spatial index) — NOT the axis-aligned bounding box: a diagonal or concave
+        // fence edge can sit 50 m+ from every bbox edge while cutting straight through
+        // the section, and the old bounding-box fast path then returned "fully inside"
+        // there (fail-OPEN) so sections sprayed straight past the fence. When a nearby
+        // edge might cross the swath we fall through to the real crossing test below;
+        // otherwise a single point-in-polygon test picks the side (fail-safe).
+        const double DEEP_INSIDE_MARGIN = 50.0; // meters from the nearest boundary edge
+        if (!AnySegmentWithin(sectionCenter.Easting, sectionCenter.Northing, DEEP_INSIDE_MARGIN + halfWidth))
         {
-            return BoundaryResult.FullyInside;
+            return IsPointInside(sectionCenter.Easting, sectionCenter.Northing)
+                ? BoundaryResult.FullyInside
+                : BoundaryResult.FullyOutside;
         }
 
-        // Precompute transform
-        double cos = Math.Cos(-heading);
-        double sin = Math.Sin(-heading);
+        // Precompute the swath-frame transform. heading is a COMPASS bearing, so
+        // world forward = (sin h, cos h); local X is the across-swath axis, local Y
+        // is along heading. The correct basis is cos(heading)/sin(heading) — with
+        // ToLocalCoords doing localX = dx·cos − dy·sin, localY = dx·sin + dy·cos.
+        // Using cos(−heading)/sin(−heading) sign-flipped the dy term, so for any
+        // NON-axis-aligned heading the crossing test projected edges onto the wrong
+        // axis and never saw a diagonal fence cross the swath; the section then read
+        // the boundary off its centre point alone and sprayed a half-swath past an
+        // angled fence. Axis-aligned headings (0/90/180/270) were unaffected, which
+        // is why this went unnoticed.
+        double cos = Math.Cos(heading);
+        double sin = Math.Sin(heading);
 
         // Find where boundary edges cross Y=0 (the section line) in local coords
         var crossings = new List<double>();
