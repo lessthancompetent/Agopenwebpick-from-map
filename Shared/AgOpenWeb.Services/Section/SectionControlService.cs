@@ -442,14 +442,33 @@ public class SectionControlService : ISectionControlService
         // the current position and each look-ahead sample point. For a pass PERPENDICULAR
         // to the headland the swath is parallel to the line and both edges cross together,
         // so this is identical to the old centre test — only angled/side passes change.
+        // Headland as VIRTUAL COVERAGE (user model / bug B): when "Off in headland"
+        // is on, the band counts toward each section's coverage — the section turns
+        // off on its OWN combined paint+headland coverage, never a whole-tool shutoff,
+        // and a section that hasn't reached the line keeps painting. HeadlandFraction
+        // is the share of the section's swath sitting in the band, sampled across the
+        // section's own width (its edge offset from GetSectionWorldPosition). Returns 0
+        // when headland section-control / the headland toggle is off (IsPointInHeadland
+        // honours both), so with the headland off behaviour is pure coverage/boundary.
         double edgeOffE = rightEdge.Easting - sectionCenter.Easting;
         double edgeOffN = rightEdge.Northing - sectionCenter.Northing;
-        bool SegmentInHeadland(Vec2 c) =>
-            IsPointInHeadland(new Vec2(c.Easting - edgeOffE, c.Northing - edgeOffN))
-            && IsPointInHeadland(new Vec2(c.Easting + edgeOffE, c.Northing + edgeOffN));
-        bool isInHeadland = SegmentInHeadland(sectionCenter);
-        bool lookOnInHeadland = SegmentInHeadland(headlandOnCheckPoint);
-        bool lookOffInHeadland = SegmentInHeadland(headlandOffCheckPoint);
+        double HeadlandFraction(Vec2 c)
+        {
+            const int SAMPLES = 6;
+            int inBand = 0;
+            for (int i = 0; i <= SAMPLES; i++)
+            {
+                double t = (double)i / SAMPLES * 2.0 - 1.0; // -1 .. +1 across the swath
+                if (IsPointInHeadland(new Vec2(c.Easting + edgeOffE * t, c.Northing + edgeOffN * t)))
+                    inBand++;
+            }
+            return (double)inBand / (SAMPLES + 1);
+        }
+        double hfCurrent = HeadlandFraction(sectionCenter);
+        double hfLookOn = HeadlandFraction(headlandOnCheckPoint);
+        double hfLookOff = HeadlandFraction(headlandOffCheckPoint);
+        bool isInHeadland = hfCurrent >= 0.5;      // display state (majority of swath in band)
+        bool lookOnInHeadland = hfLookOn >= 0.5;   // display state
         _totalHeadlandMs += _sectionSw.Elapsed.TotalMilliseconds;
 
         // Bitmap-based coverage check is O(width / cellSize) bit reads per section
@@ -483,8 +502,17 @@ public class SectionControlService : ISectionControlService
             ? tool.MinCoverage / 100.0
             : DEFAULT_COVERAGE_THRESHOLD;
         double coverageOffThreshold = COVERAGE_OFF_THRESHOLD;
-        bool lookOnCovered = lookOnCoverage.CoveragePercent >= coverageOnThreshold;
-        bool lookOffCovered = lookOffCoverage.CoveragePercent >= coverageOffThreshold;
+        // Fold the headland-band share into each look-ahead coverage: the band counts
+        // exactly like already-painted ground, so the section decides on its OWN
+        // combined coverage (per-section, independent) with no separate headland
+        // shut-off term. With "Off in headland" off the fraction is 0, so a section
+        // over unpainted ground stays active even inside the headland.
+        bool lookOnCovered = Math.Min(1.0, lookOnCoverage.CoveragePercent + hfLookOn) >= coverageOnThreshold;
+        bool lookOffCovered = Math.Min(1.0, lookOffCoverage.CoveragePercent + hfLookOff) >= coverageOffThreshold;
+        // Current-position headland backstop: during a U-turn the planned-path
+        // look-ahead samples BEYOND the headland, so without a here-and-now check a
+        // section would paint straight through the band it is physically crossing.
+        bool currentInHeadlandFull = hfCurrent >= coverageOffThreshold;
 
         // Store coverage percentage for potential UI display
         section.CoveragePercent = currentCoverage.CoveragePercent;
@@ -520,9 +548,8 @@ public class SectionControlService : ISectionControlService
         // The SECTION_ON_DELAY debounce inside the state machine protects against brief
         // false positives — by the time it expires, the section has moved enough that
         // a transient blip cannot reach IsOn=true unless lookOnCovered stays false.
-        bool shouldBeOn = !lookOnCovered      // Not already covered at look-ON point
-                       && lookOnInBoundary    // Inside boundary at look-ahead
-                       && !lookOnInHeadland;  // Not in headland
+        bool shouldBeOn = !lookOnCovered      // Not already covered (paint+headland) at look-ON
+                       && lookOnInBoundary;   // Inside boundary at look-ahead
 
         // While a U-turn is executing the arming must be monotonic: gate the ON
         // request on the REMAINING planned-path length (relay leads the exit by
@@ -538,18 +565,9 @@ public class SectionControlService : ISectionControlService
             shouldBeOn = true;
 
         // Determine if section should be off
-        bool shouldBeOff = lookOffCovered     // Already covered
-                        || !lookOffInBoundary // Outside boundary at look-ahead
-                        || lookOffInHeadland  // In headland at look-ahead
-                        // Backstop: the tool is IN the headland right now. The
-                        // look-ahead is the anticipatory trigger, but during a
-                        // U-turn the planned-path walk samples BEYOND the
-                        // headland (the next pass) and never sees the band the
-                        // tool is physically crossing - sections painted straight
-                        // through the headland. IsPointInHeadland already honours
-                        // the headland-section-control setting and the on-screen
-                        // headland toggle, so headland-lap painting is unaffected.
-                        || isInHeadland;
+        bool shouldBeOff = lookOffCovered        // Already covered (paint + headland) at look-ahead
+                        || !lookOffInBoundary    // Outside boundary at look-ahead
+                        || currentInHeadlandFull; // physically fully in the headland now (U-turn backstop)
 
         // Apply state transitions with timing
         if (shouldBeOn && !section.IsOn)

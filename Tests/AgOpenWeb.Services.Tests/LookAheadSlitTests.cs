@@ -1029,44 +1029,86 @@ public class LookAheadSlitTests
 
     #endregion
 
-    #region Headland side-pass edge accuracy (bug A #2)
+    #region Headland as virtual coverage (bug A/B: independence + off-in-headland)
 
-    /// <summary>
-    /// Drive NORTH along an EAST-side headland whose line sits at easting 185
-    /// (15 m inset). With 3×2 m sections at tool-centre 183.5, the east section
-    /// spans E[184.5,186.5]: its west half (184.5–185) is cultivated field, its
-    /// east half (185–186.5) is the headland band. Testing the section CENTRE
-    /// (185.5, in the band) wrongly declares the whole section "in headland" and
-    /// leaves the field half unsprayed — a ~half-section gap inboard of the line.
-    /// The section must paint its field half up to the line.
-    /// </summary>
-    [Test]
-    public void SidePass_SectionStraddlingHeadlandLine_PaintsFieldHalfUpToLine()
+    // Shared setup: a square field 0..200 with an EAST-side headland whose line sits
+    // at easting 185 (band = E > 185, cultivated field = E < 185). Returns after the
+    // headland state is applied; the caller sets toolCenter and toggles.
+    private void SetUpHeadlandField()
     {
-        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
-            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
         SetUpField();
         _appState.Field.HeadlandLine = new List<Vec3>
         {
             new(15, 15, 0), new(185, 15, 0), new(185, 185, 0), new(15, 185, 0)
         };
         _appState.FieldTools.IsHeadlandOn = true;
-        ConfigurationStore.Instance.Tool.IsHeadlandSectionControl = true;
         _sectionControl.SetAllAuto();
+    }
 
-        double toolCenter = 183.5; // east section spans E[184.5,186.5], centre 185.5 (band)
+    /// <summary>
+    /// "Off in headland" ON. 3×2 m sections at tool-centre 184: section 0 (E[181,183])
+    /// and section 1 (E[183,185], edge on the line) are in the cultivated field;
+    /// section 2 (E[185,187]) is entirely in the headland band. Sections must act
+    /// INDEPENDENTLY: the field sections keep painting right up to the line, the band
+    /// section turns off (the band is treated as already-painted, covered by the
+    /// headland pass) — never a whole-tool shutoff.
+    /// </summary>
+    [Test]
+    public void OffInHeadlandOn_SectionsSplitAtLine_FieldPaintsToLine_BandSectionOff()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpHeadlandField();
+        ConfigurationStore.Instance.Tool.IsHeadlandSectionControl = true; // "Off in headland" ON
+
         double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
-        DriveNorth(toolCenter, ref lat, 15.0, 200); // N ≈ 30 → 113, inside the cultivated N range
+        DriveNorth(184.0, ref lat, 15.0, 200);
 
-        // Control: a point well inside the field (section 0) paints normally.
-        Assert.That(_coverage.IsPointCovered(181.0, 80), Is.True,
-            "an interior section should paint normally");
-
-        // The bug: the FIELD half of the straddling east section (E=184.9, just
-        // inboard of the line at 185, beyond section 1's reach) must be covered —
-        // not left as a gap inboard of the line.
+        Assert.That(_coverage.IsPointCovered(182.0, 80), Is.True,
+            "field section (0) must paint");
         Assert.That(_coverage.IsPointCovered(184.9, 80), Is.True,
-            "section straddling the headland line must paint its field half up to the line");
+            "field section (1) must paint right up to the headland line — no gap inboard");
+        Assert.That(_coverage.IsPointCovered(186.0, 80), Is.False,
+            "band section (2) must be OFF — the headland band is covered by the headland pass");
+    }
+
+    /// <summary>
+    /// Same geometry, but "Off in headland" OFF. Section 2 is over UNPAINTED ground in
+    /// the band, so with headland section-control off it must stay ACTIVE and paint —
+    /// the headland is not treated as covered when the setting is off.
+    /// </summary>
+    [Test]
+    public void OffInHeadlandOff_BandSectionOverFreshGround_StaysActive()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpHeadlandField();
+        ConfigurationStore.Instance.Tool.IsHeadlandSectionControl = false; // "Off in headland" OFF
+
+        double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
+        DriveNorth(184.0, ref lat, 15.0, 200);
+
+        Assert.That(_coverage.IsPointCovered(186.0, 80), Is.True,
+            "with Off-in-headland OFF, a section over unpainted headland ground must paint");
+    }
+
+    /// <summary>
+    /// Whole boom in the headland band ("headland pass") with "Off in headland" ON:
+    /// every section is in the band → no section activates.
+    /// </summary>
+    [Test]
+    public void OffInHeadlandOn_FullBandPass_NoActivation()
+    {
+        SetUpPipeline(numSections: 3, totalToolWidth: 6.0,
+            lookAheadOnSeconds: 0.0, lookAheadOffSeconds: 0.0);
+        SetUpHeadlandField();
+        ConfigurationStore.Instance.Tool.IsHeadlandSectionControl = true;
+
+        double lat = ORIGIN_LAT + 30 / MetersPerDegLat;
+        DriveNorth(188.0, ref lat, 15.0, 200); // boom E[185,191], entirely in the band
+
+        Assert.That(_coverage.IsPointCovered(188.0, 80), Is.False,
+            "a headland pass must not activate sections when Off-in-headland is on");
     }
 
     #endregion
