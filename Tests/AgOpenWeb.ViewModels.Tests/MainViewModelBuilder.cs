@@ -93,6 +93,9 @@ public class MainViewModelBuilder
             persistentStateService: Substitute.For<IPersistentStateService>(),
             batteryService: new NullBatteryService(),
             uiDispatcher: new AgOpenWeb.Services.Threading.InlineUiDispatcher(),
-            uiTimerFactory: new AgOpenWeb.Services.Threading.ManualUiTimerFactory());
+            uiTimerFactory: new AgOpenWeb.Services.Threading.ManualUiTimerFactory(),
+            // Real geometry, not a mock: the boundary two-tap creators need FixSpacing to
+            // actually densify the pick ring (BoundaryAB/CurveSegment tests assert on it).
+            fenceLineService: new AgOpenWeb.Services.Geometry.FenceLineService());
     }
 }

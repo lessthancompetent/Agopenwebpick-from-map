@@ -12,6 +12,11 @@ namespace AgOpenWeb.ViewModels.Tests;
 /// heading = atan2(B − A). Placement: the line is shifted (w−o)/2 toward the field interior so
 /// pass 0 puts the tool EDGE on the fence (AOG's swath-edge convention, CABLine.cs:118/140-142),
 /// then extended past the boundary like every other AB creator.
+/// P1.1: the snap runs on the DENSE pick ring (FixSpacing, 1.1 m here), so a tap 3 m diagonally
+/// INSIDE a corner now lands on the nearest side vertex (3 m away) rather than the corner (4.2 m)
+/// — exactly what AOG's dense fenceLine does. The regression taps therefore sit just OUTSIDE the
+/// corners (on the diagonal), where the corner vertex is unambiguously the nearest; the results
+/// are unchanged from the sparse-ring version because densifying only adds points.
 /// </summary>
 [TestFixture]
 public class BoundaryABTests
@@ -48,14 +53,15 @@ public class BoundaryABTests
 
     private static double Wrap2Pi(double rad) => (rad % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
 
-    // Taps near P1 (0,100) then P2 (100,100): start=1, end=2, |1−2| ≤ n/2 → swap so start > end
-    // (start=2, end=1). A = P2, B = P1, heading = atan2(0−100, 100−100) = −π/2 → 270° (west).
+    // Taps near P1 (0,100) then P2 (100,100): on the dense ring (64 vertices per side) P1 is
+    // index 64 and P2 index 128, |64−128| ≤ n/2 → swap so start > end (start=P2, end=P1).
+    // A = P2, B = P1, heading = atan2(0−100, 100−100) = −π/2 → 270° (west).
     [Test]
     public void TwoTaps_SnapToFenceVertices_AndBuildABWithAogOrderingAndHeading()
     {
         var vm = BuildVm();
 
-        vm.RemoteCreateBoundaryAB(3, 97, 97, 103);
+        vm.RemoteCreateBoundaryAB(-2, 102, 102, 102);
 
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1));
         var track = vm.SavedTracks[0];
@@ -85,9 +91,9 @@ public class BoundaryABTests
     public void OppositeTapOrder_GivesTheSameLine()
     {
         var vm1 = BuildVm();
-        vm1.RemoteCreateBoundaryAB(3, 97, 97, 103);    // P1 then P2
+        vm1.RemoteCreateBoundaryAB(-2, 102, 102, 102);  // P1 then P2
         var vm2 = BuildVm();
-        vm2.RemoteCreateBoundaryAB(97, 103, 3, 97);    // P2 then P1
+        vm2.RemoteCreateBoundaryAB(102, 102, -2, 102);  // P2 then P1
 
         var t1 = vm1.SavedTracks[0];
         var t2 = vm2.SavedTracks[0];
@@ -107,11 +113,13 @@ public class BoundaryABTests
     {
         var vm = BuildVm(withHole: true);
 
-        vm.RemoteCreateBoundaryAB(41, 59, 59, 59);     // Q1 (40,60) then Q2 (60,60)
+        vm.RemoteCreateBoundaryAB(39.8, 60.2, 60.2, 60.2); // Q1 (40,60) then Q2 (60,60), just outside the hole
 
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1));
         var track = vm.SavedTracks[0];
-        // start=1, end=2 → swap → A = Q2 (60,60), B = Q1 (40,60): heading west = 270°.
+        // Inner ring (400 m² → 0.55 m spacing, 20 m sides halve to 0.625 m = 32 vertices per
+        // side): Q1 = index 32, Q2 = 64, |32−64| ≤ n/2 → swap → A = Q2 (60,60), B = Q1 (40,60):
+        // heading west = 270°.
         Assert.That(track.Name, Is.EqualTo("AB 270°"));
         Assert.That(vm.StatusMessage, Is.EqualTo("Created boundary AB 270° (inner 1 ring)"));
         Assert.That(Wrap2Pi(track.Heading), Is.EqualTo(1.5 * Math.PI).Within(1e-9));
@@ -131,7 +139,7 @@ public class BoundaryABTests
     {
         var vm = BuildVm();
 
-        vm.RemoteCreateBoundaryAB(1, 1, 2, -1);        // both nearest P0 (0,0)
+        vm.RemoteCreateBoundaryAB(-1, -1, -2, -1);     // both outside the corner, nearest P0 (0,0)
 
         Assert.That(vm.SavedTracks, Is.Empty);
         Assert.That(vm.SelectedTrack, Is.Null);

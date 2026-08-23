@@ -715,5 +715,76 @@ namespace AgOpenWeb.Models.Guidance
 
             return current;
         }
+
+        /// <summary>
+        /// AgOpenGPS 6.8.6 <c>CABCurve.MakePointMinimumSpacing</c> (Classes/CABCurve.cs:1453-1475):
+        /// wherever two consecutive points are more than <paramref name="maxSpacing"/> apart,
+        /// insert their midpoint and rescan from the start, until no gap exceeds it. Pure
+        /// midpoint densification — shape-preserving, NO smoothing (every original point stays
+        /// exactly where it was). Inserted points inherit the preceding point's heading, as in
+        /// AOG; call <see cref="CalculateCentralHeadings"/> afterwards. AOG only runs when the
+        /// list has more than 3 points; shorter lists are returned as a copy, unchanged.
+        /// Returns a NEW list (the input is not mutated).
+        /// </summary>
+        public static List<Vec3> MakePointMinimumSpacing(IReadOnlyList<Vec3> points, double maxSpacing)
+        {
+            var list = points == null ? new List<Vec3>() : new List<Vec3>(points);
+            int cnt = list.Count;
+            if (cnt <= 3 || maxSpacing <= 0) return list;
+
+            for (int i = 0; i < cnt - 1; i++)
+            {
+                int j = i + 1;
+                double dx = list[j].Easting - list[i].Easting;
+                double dy = list[j].Northing - list[i].Northing;
+                if (Math.Sqrt(dx * dx + dy * dy) > maxSpacing)
+                {
+                    list.Insert(j, new Vec3(
+                        (list[i].Easting + list[j].Easting) / 2.0,
+                        (list[i].Northing + list[j].Northing) / 2.0,
+                        list[i].Heading));
+                    cnt = list.Count;
+                    i = -1; // AOG rescans from the start after every insert
+                }
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// AgOpenGPS 6.8.6 <c>CABCurve.CalculateHeadings</c> (Classes/CABCurve.cs:1383-1414) for an
+        /// OPEN curve: first point = atan2(p1 − p0), middle points = CENTRAL difference
+        /// atan2(p[i+1] − p[i−1]), last point = atan2(p[n−1] − p[n−2]); all wrapped to [0, 2π).
+        /// Unlike <see cref="CalculateHeadings"/> (forward difference) this gives each interior
+        /// point the average of its two neighbouring segment directions, so a point on a corner
+        /// carries the bisector heading rather than the outgoing segment's. Modified in place
+        /// and returned. AOG only recomputes when the list has more than 3 points; shorter lists
+        /// fall back to the forward-difference calculation so no heading is ever left at 0.
+        /// </summary>
+        public static List<Vec3> CalculateCentralHeadings(List<Vec3> points)
+        {
+            if (points == null || points.Count < 2) return points;
+            int cnt = points.Count;
+            if (cnt <= 3) return CalculateHeadings(points);
+
+            static double Wrap(double h) => h < 0 ? h + GeometryMath.twoPI : h;
+
+            var first = points[0];
+            points[0] = new Vec3(first.Easting, first.Northing,
+                Wrap(Math.Atan2(points[1].Easting - first.Easting, points[1].Northing - first.Northing)));
+
+            // Middle points use the untouched neighbours' positions (headings don't feed back).
+            for (int i = 1; i < cnt - 1; i++)
+            {
+                var p = points[i];
+                points[i] = new Vec3(p.Easting, p.Northing,
+                    Wrap(Math.Atan2(points[i + 1].Easting - points[i - 1].Easting,
+                                    points[i + 1].Northing - points[i - 1].Northing)));
+            }
+
+            var last = points[cnt - 1];
+            points[cnt - 1] = new Vec3(last.Easting, last.Northing,
+                Wrap(Math.Atan2(last.Easting - points[cnt - 2].Easting, last.Northing - points[cnt - 2].Northing)));
+            return points;
+        }
     }
 }

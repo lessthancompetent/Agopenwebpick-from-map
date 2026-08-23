@@ -9,6 +9,10 @@ namespace AgOpenWeb.ViewModels.Tests;
 /// buttons: RemoteCreateBoundaryCurveSegment / RemoteBoundarySegExtend. Uses a circular
 /// boundary so the on-boundary arc portion of the track is identifiable by radius (the
 /// past-fence tangent extensions leave the circle), making the ±5 m growth measurable.
+/// P1.1/P1.3: the ring is first normalised by FixSpacing (1.1 m rule → the 0.87 m circle is
+/// thinned to 1.745 m), the walk is fence-winding and half-open, the body is midpoint-densified
+/// to ≤ 1.6 m, and the track is named "Cu {deg}°" (AOG FormABDraw.cs:505) instead of the old
+/// fixed "Boundary Curve" — hence the name assertions below check the AOG pattern.
 /// </summary>
 [TestFixture]
 public class BoundaryCurveSegmentTests
@@ -63,7 +67,9 @@ public class BoundaryCurveSegmentTests
 
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1));
         var track = vm.SavedTracks[0];
-        Assert.That(track.Name, Is.EqualTo("Boundary Curve"));
+        Assert.That(track.Name, Does.StartWith("Cu ").And.EndWith("°"));
+        // Top → east: headings sweep 90° → 180°, circular mean ≈ 135°.
+        Assert.That(double.Parse(track.Name[3..^1], System.Globalization.CultureInfo.InvariantCulture), Is.EqualTo(135).Within(2));
         Assert.That(vm.SelectedTrack, Is.SameAs(track));
         // Quarter arc, not the 3/4 complement (the near-tip extension points hug the
         // circle, so the band reads a few metres long — hence the loose tolerance).
@@ -76,6 +82,7 @@ public class BoundaryCurveSegmentTests
         var vm = BuildVmWithCircleBoundary();
         vm.RemoteCreateBoundaryCurveSegment(0, Radius, Radius, 0);
         var track = vm.SavedTracks[0];
+        string name = track.Name;
         double before = ArcBandLength(track.Points);
 
         vm.RemoteBoundarySegExtend("A", 1);
@@ -84,7 +91,7 @@ public class BoundaryCurveSegmentTests
         // (walks whole ring vertices, so a step lands just under the 5 m budget).
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1));
         Assert.That(vm.SavedTracks[0], Is.SameAs(track));
-        Assert.That(track.Name, Is.EqualTo("Boundary Curve"));
+        Assert.That(track.Name, Is.EqualTo(name));
         Assert.That(ArcBandLength(track.Points) - before, Is.EqualTo(5.0).Within(2.0));
 
         double afterA = ArcBandLength(track.Points);

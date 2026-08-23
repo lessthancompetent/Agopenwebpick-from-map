@@ -92,6 +92,9 @@ public partial class MainViewModel : ObservableObject
     private readonly IGpsPipelineService _gpsPipelineService;
     private readonly ISteerMachineLoopService? _controlLoop;
     private readonly IPositionEstimator? _positionEstimator;
+    // Fence-line geometry (AOG CFenceLine port). Used to build the dense, normalised pick
+    // rings the two-tap boundary creators snap on (Commands.Track BuildPickRing).
+    private readonly Services.Interfaces.IFenceLineService _fenceLineService;
     private readonly IPipelineIntents _intents;
     private readonly ILogger<MainViewModel> _logger;
     private readonly ApplicationState _appState;
@@ -225,7 +228,8 @@ public partial class MainViewModel : ObservableObject
         IUiDispatcher uiDispatcher,
         IUiTimerFactory uiTimerFactory,
         ISteerMachineLoopService? controlLoop = null,
-        IPositionEstimator? positionEstimator = null)
+        IPositionEstimator? positionEstimator = null,
+        Services.Interfaces.IFenceLineService? fenceLineService = null)
     {
         _logger = logger;
         _configStore = configStore;
@@ -368,6 +372,9 @@ public partial class MainViewModel : ObservableObject
         _gpsPipelineService = gpsPipelineService;
         _controlLoop = controlLoop;
         _positionEstimator = positionEstimator;
+        // Stateless pure geometry — a default instance is as good as the DI singleton, so
+        // hosts (and tests) that don't register IFenceLineService still get the real thing.
+        _fenceLineService = fenceLineService ?? new Services.Geometry.FenceLineService();
         _intents = intents;
         _appState = appState;
         _fieldPlaneFileService = new FieldPlaneFileService();

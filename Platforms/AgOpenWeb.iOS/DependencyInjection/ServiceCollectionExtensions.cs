@@ -104,6 +104,7 @@ public static class ServiceCollectionExtensions
 
         // Headland builder services
         services.AddSingleton<IPolygonOffsetService, PolygonOffsetService>();
+        services.AddSingleton<IFenceLineService, FenceLineService>(); // dense boundary pick rings (AOG FixFenceLine port)
         services.AddSingleton<IHeadlandBuilderService, HeadlandBuilderService>();
         services.AddSingleton<ITurnAreaService, TurnAreaService>();
 

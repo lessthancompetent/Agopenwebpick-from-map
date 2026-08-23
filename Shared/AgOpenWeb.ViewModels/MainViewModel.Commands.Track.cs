@@ -71,17 +71,77 @@ public partial class MainViewModel
     // Last boundary-segment curve, remembered so the A++/A−−/B++/B−− buttons can walk its
     // ends along the ring after creation. Invalidated by SavedTracks membership (track
     // deleted, or another field opened → SavedTracks reloads with fresh Track objects).
+    // _bndSegRing is the DENSE pick ring (BuildPickRing) the curve was snapped on and walked
+    // along — the trim buttons must walk exactly that ring, never the sparse source vertices.
+    // [_bndSegAi, _bndSegBi) is the half-open index range of the curve along it (fence winding).
     private Models.Track.Track? _bndSegTrack;
-    private System.Collections.Generic.List<Models.Base.Vec2>? _bndSegRing;
-    private int _bndSegAi, _bndSegBi, _bndSegStep;
+    private System.Collections.Generic.List<Models.Base.Vec3>? _bndSegRing;
+    private int _bndSegAi, _bndSegBi;
     // The track that was selected BEFORE the Bnd. Curve was created, so Cancel in the trim
     // phase can put the operator back where they were (P2.4).
     private Models.Track.Track? _bndSegPrevSelected;
 
     /// <summary>
-    /// Boundary curve from two tapped points (remote/web "Bnd. Curve"): snap A and B to the
-    /// nearest outer-boundary vertices, walk the shorter arc between them, and create an OPEN
-    /// curve following the boundary. Mirrors native FormABDraw's BtnMakeCurve segment logic.
+    /// P1.1 dense, normalised pick ring. AgOpenGPS's two-tap boundary tools (FormABDraw) search
+    /// <c>fenceLine</c>, which CFenceLine.FixFenceLine (CFenceLine.cs:48-114) has already
+    /// densified to 1.1 / 2.2 / 3.3 m (by fence area; ×0.5 for inner rings) and given headings.
+    /// Our rings are sparse after BoundaryResolution.Normalize + Clipper (a straight side can be
+    /// a single 100–400 m segment), so snapping on the raw vertices refused two taps on one side
+    /// ("Pick two different points"), refused 2-vertex arcs, picked the longer arc by count and
+    /// made the 5 m trim buttons inert. This runs the same FixFenceLine port
+    /// (<see cref="Services.Interfaces.IFenceLineService.FixSpacing"/>) over the ring so the
+    /// snap + walk see AOG's vertex set. Densification only ADDS midpoints on the segments (and
+    /// thins runs closer than 0.9 × spacing, as AOG does), so every existing sparse vertex that
+    /// survives is still at the same position. Headings are the ring-style wrap-around central
+    /// difference FixSpacing computes. <paramref name="areaSqM"/> is the ring's OWN area (AOG
+    /// uses each CBoundaryList's area, so a hole gets 1.1 × 0.5 regardless of the field size).
+    /// </summary>
+    private System.Collections.Generic.List<Models.Base.Vec3> BuildPickRing(
+        System.Collections.Generic.IReadOnlyList<Models.Base.Vec3> ring, int ringIndex, double areaSqM)
+    {
+        var raw = new System.Collections.Generic.List<Models.Base.Vec3>(ring);
+        if (raw.Count < 3) return raw;
+        var dense = _fenceLineService.FixSpacing(raw, areaSqM, ringIndex, out _);
+        return dense ?? raw;
+    }
+
+    /// <summary>Dense pick ring of a boundary polygon (raw fence), area = the polygon's own area.</summary>
+    private System.Collections.Generic.List<Models.Base.Vec3> BuildPickRing(BoundaryPolygon ring, int ringIndex)
+    {
+        var raw = new System.Collections.Generic.List<Models.Base.Vec3>(ring.Points.Count);
+        foreach (var p in ring.Points) raw.Add(new Models.Base.Vec3(p.Easting, p.Northing, 0));
+        return BuildPickRing(raw, ringIndex, ring.AreaSquareMeters);
+    }
+
+    /// <summary>Index of the ring vertex nearest (e, n) by squared distance, first wins on ties
+    /// (FormABDraw.cs:625-661 loops the same way).</summary>
+    private static int NearestRingIndex(System.Collections.Generic.IReadOnlyList<Models.Base.Vec3> ring, double e, double n)
+    {
+        int best = 0; double bd = double.MaxValue;
+        for (int i = 0; i < ring.Count; i++)
+        {
+            double dx = ring[i].Easting - e, dy = ring[i].Northing - n;
+            double d = dx * dx + dy * dy;
+            if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Boundary curve from two tapped points (remote/web "Bnd. Curve"), mirroring AgOpenGPS
+    /// 6.8.6 FormABDraw.BtnMakeCurve_Click (FormABDraw.cs:424-529):
+    ///  - A and B snap to the nearest vertices of the DENSE pick ring (P1.1, AOG's fenceLine
+    ///    density) — here the outer boundary inset by half the tool width plus half the U-turn
+    ///    clearance (kept from before: the pass sits inside the fence and the turn zone).
+    ///  - Direction rule (:426-446): the curve follows the SHORTER arc by vertex count and is
+    ///    ALWAYS walked in increasing ring index, i.e. the fence's winding direction. If
+    ///    |start−end| > n/2 the short arc crosses the index seam: start is made the larger index
+    ///    and the walk wraps start..n−1, 0..end−1; else start is the smaller and the walk is
+    ///    start..end−1. Tap order never changes travel direction (P1.3).
+    ///  - Half-open range (:448-464): the higher-index touched vertex is excluded.
+    ///  - Needs more than 3 vertices (:477), then MakePointMinimumSpacing 1.6 m (no smoothing),
+    ///    central-difference headings, circular-mean track heading, straight tails (ours:
+    ///    ExtendCurvePastBoundary capped at AOG's 99 m), name "Cu {deg}°" (:484-515).
     /// </summary>
     public void RemoteCreateBoundaryCurveSegment(double aE, double aN, double bE, double bN)
     {
@@ -108,33 +168,34 @@ public partial class MainViewModel
         var rawVec2 = new System.Collections.Generic.List<Models.Base.Vec2>(boundary.Points.Count);
         foreach (var p in boundary.Points) rawVec2.Add(new Models.Base.Vec2(p.Easting, p.Northing));
         var offset = insetDistance > 0.05 ? _polygonOffsetService.CreateInwardOffset(rawVec2, insetDistance) : null;
-        var ring = (offset != null && offset.Count >= 3) ? offset : rawVec2;
+        var source = (offset != null && offset.Count >= 3) ? offset : rawVec2;
+        var sourceVec3 = new System.Collections.Generic.List<Models.Base.Vec3>(source.Count);
+        foreach (var p in source) sourceVec3.Add(new Models.Base.Vec3(p.Easting, p.Northing, 0));
+        // Densify THE RING THE CURVE LIVES ON (the inset one). Spacing keys off the outer
+        // boundary's area, which is what AOG's fence ring would use (the inset ring's own area
+        // differs from it only by a strip, never enough to cross a 20/40 ha band in practice).
+        var ring = BuildPickRing(sourceVec3, 0, boundary.AreaSquareMeters);
         int n = ring.Count;
 
-        int NearestIndex(double e, double north)
+        int start = NearestRingIndex(ring, aE, aN);
+        int end = NearestRingIndex(ring, bE, bN);
+        if (start == end) { StatusMessage = "Pick two different points on the boundary"; return; }
+
+        // FormABDraw.cs:426-446 — shorter arc by vertex count, walked in fence winding.
+        if (Math.Abs(start - end) > n * 0.5)
         {
-            int best = 0; double bd = double.MaxValue;
-            for (int i = 0; i < n; i++)
-            {
-                double dx = ring[i].Easting - e, dy = ring[i].Northing - north;
-                double d = dx * dx + dy * dy;
-                if (d < bd) { bd = d; best = i; }
-            }
-            return best;
+            if (start < end) (end, start) = (start, end); // wraps through the seam
+        }
+        else
+        {
+            if (start > end) (end, start) = (start, end);
         }
 
-        int ai = NearestIndex(aE, aN);
-        int bi = NearestIndex(bE, bN);
-        if (ai == bi) { StatusMessage = "Pick two different points on the boundary"; return; }
-
-        // Walk the SHORTER arc A→B around the closed ring (mirrors FormABDraw's wrap check).
-        int forward = (bi - ai + n) % n;
-        int step = forward <= n - forward ? 1 : -1;
-        var curvePoints = BuildBoundarySegmentCurve(ring, ai, bi, step);
+        var curvePoints = BuildBoundarySegmentCurve(ring, start, end, out double meanHeading);
         if (curvePoints == null) { StatusMessage = "Segment too short for a curve"; return; }
         var track = new Models.Track.Track
         {
-            Name = "Boundary Curve",
+            Name = CurveNameFromHeading(meanHeading),
             Points = curvePoints,
             Type = Models.Track.TrackType.Curve,
             IsVisible = true,
@@ -149,10 +210,18 @@ public partial class MainViewModel
         SaveTracksToFile();
         _bndSegTrack = track;
         _bndSegRing = ring;
-        _bndSegAi = ai;
-        _bndSegBi = bi;
-        _bndSegStep = step;
-        StatusMessage = $"Created boundary curve ({curvePoints.Count} points, {insetDistance:F1} m inside fence)";
+        _bndSegAi = start;
+        _bndSegBi = end;
+        StatusMessage = $"Created {track.Name} ({curvePoints.Count} points, {insetDistance:F1} m inside fence)";
+        _logger.LogDebug($"[BoundaryCurve] ring n={n} start={start} end={end} (half-open, +1) points={curvePoints.Count}");
+    }
+
+    /// <summary>AOG FormABDraw.cs:505-507: "Cu " + Math.Round(degrees, 1) in general (invariant)
+    /// format + "°" — "Cu 270°", "Cu 45.5°", never a forced ".0" (same as the AB naming).</summary>
+    private static string CurveNameFromHeading(double headingRad)
+    {
+        double deg = headingRad * 180.0 / Math.PI;
+        return "Cu " + Math.Round(deg, 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\u00B0";
     }
 
     /// <summary>
@@ -189,12 +258,18 @@ public partial class MainViewModel
         foreach (var inner in bnd.InnerBoundaries)
             if (inner?.Points != null && inner.Points.Count >= 3) rings.Add(inner);
 
+        // P1.1: snap on each ring's DENSE pick ring (AOG's fenceLine density), not the sparse
+        // source vertices. The index rule and heading below then use the dense ring's indices;
+        // an existing vertex keeps its position, so taps at existing corners give the same line.
+        var dense = new System.Collections.Generic.List<System.Collections.Generic.List<Models.Base.Vec3>>(rings.Count);
+        for (int j = 0; j < rings.Count; j++) dense.Add(BuildPickRing(rings[j], j));
+
         // Tap A: brute-force squared distance over every vertex of every ring (:625-646).
         int ringIdx = 0, start = 0;
         double best = double.MaxValue;
-        for (int j = 0; j < rings.Count; j++)
+        for (int j = 0; j < dense.Count; j++)
         {
-            var pts = rings[j].Points;
+            var pts = dense[j];
             for (int i = 0; i < pts.Count; i++)
             {
                 double dx = pts[i].Easting - aE, dy = pts[i].Northing - aN;
@@ -204,16 +279,9 @@ public partial class MainViewModel
         }
 
         // Tap B: only the ring A landed on (:647-661).
-        var fence = rings[ringIdx].Points;
+        var fence = dense[ringIdx];
         int n = fence.Count;
-        int end = 0;
-        best = double.MaxValue;
-        for (int i = 0; i < n; i++)
-        {
-            double dx = fence[i].Easting - bE, dy = fence[i].Northing - bN;
-            double d = dx * dx + dy * dy;
-            if (d < best) { best = d; end = i; }
-        }
+        int end = NearestRingIndex(fence, bE, bN);
 
         if (start == end)
         {
@@ -238,7 +306,8 @@ public partial class MainViewModel
         double sinH = Math.Sin(heading), cosH = Math.Cos(heading);
 
         // Interior side: sign of cross(dir, centroid − A). Positive = centroid left of travel.
-        var (cE, cN) = RingCentroid(fence);
+        // (Centroid of the source polygon — densifying only adds points on its edges.)
+        var (cE, cN) = RingCentroid(rings[ringIdx].Points);
         double cross = sinH * (cN - fa.Northing) - cosH * (cE - fa.Easting);
         bool shiftLeft = ringIdx == 0 ? cross >= 0 : cross < 0; // inner ring: away from the hole
         // Left-perpendicular of (sinH, cosH) is (−cosH, sinH); right is (cosH, −sinH).
@@ -296,10 +365,13 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// A++/A−−/B++/B−− for the last boundary-segment curve: walk one end ±5 m along the
-    /// boundary ring (wrapping around it) and rebuild the SAME track in place so the map
-    /// shows it grow/shrink. end = "A"/"B"; dir = +1 extend, −1 shorten. Clamped so the
-    /// ends can't cross and the arc can't collapse below ~2 m.
+    /// A++/A−−/B++/B−− for the last boundary-segment curve: walk one end ±5 m along the DENSE
+    /// pick ring it was built on (wrapping around it) and rebuild the SAME track in place so
+    /// the map shows it grow/shrink. end = "A"/"B"; dir = +1 extend, −1 shorten. The curve is
+    /// the half-open index range [_bndSegAi, _bndSegBi) walked in fence winding (+1), so A
+    /// extends by moving _bndSegAi backwards and B by moving _bndSegBi forwards. Clamped so
+    /// the ends can't cross and the arc can't collapse below ~2 m. The track's name is left
+    /// as created (AOG never renames on A++/B++ either).
     /// </summary>
     public void RemoteBoundarySegExtend(string end, int dir)
     {
@@ -321,12 +393,12 @@ public partial class MainViewModel
             double dx = ring[j].Easting - ring[i].Easting, dy = ring[j].Northing - ring[i].Northing;
             return Math.Sqrt(dx * dx + dy * dy);
         }
-        double ArcLen(int a, int b) // ring distance a→b walking by _bndSegStep
+        double ArcLen(int a, int b) // ring distance a→b walking forward (fence winding)
         {
             double len = 0;
             for (int i = a; i != b;)
             {
-                int j = (i + _bndSegStep + n) % n;
+                int j = (i + 1) % n;
                 len += Seg(i, j);
                 i = j;
             }
@@ -339,8 +411,8 @@ public partial class MainViewModel
         double budget = dir > 0
             ? Math.Min(stepMeters, perimeter - minCurveMeters - arc)
             : Math.Min(stepMeters, arc - minCurveMeters);
-        // A extends against the arc's walk direction, B with it; shortening is the reverse.
-        int walkDir = (isA ? -_bndSegStep : _bndSegStep) * dir;
+        // A extends against the walk direction, B with it; shortening is the reverse.
+        int walkDir = (isA ? -1 : 1) * dir;
         int idx = isA ? _bndSegAi : _bndSegBi;
         double moved = 0;
         for (int guard = 0; guard < n; guard++)
@@ -358,7 +430,7 @@ public partial class MainViewModel
         }
         int nai = isA ? idx : _bndSegAi;
         int nbi = isA ? _bndSegBi : idx;
-        var curvePoints = BuildBoundarySegmentCurve(ring, nai, nbi, _bndSegStep);
+        var curvePoints = BuildBoundarySegmentCurve(ring, nai, nbi, out _);
         if (curvePoints == null) { StatusMessage = "Boundary curve at minimum length"; return; }
         _bndSegAi = nai;
         _bndSegBi = nbi;
@@ -492,28 +564,50 @@ public partial class MainViewModel
         return h;
     }
 
-    /// <summary>Ring arc ai→bi (walking by step) → drivable open curve. Rounds the boundary's
-    /// sharp corners so the tractor can actually drive it (Chaikin corner-cutting), computes
-    /// heading per point (guidance's forward test keys off it), then extends both ends past
-    /// the field boundary along their tangents — exactly like the hand-drawn curve tool and
-    /// an AB line; without that the curve stops inside the field and the U-turn generator has
-    /// no boundary crossing to anchor the turn at each pass end. Null when the arc has fewer
-    /// than 3 vertices.</summary>
+    /// <summary>
+    /// Half-open ring range [start, end) walked in increasing index (wrapping through 0 when
+    /// start > end) → drivable open curve, per AgOpenGPS FormABDraw.BtnMakeCurve_Click
+    /// (FormABDraw.cs:448-499) — P1.3:
+    ///  1. copy the ring vertices start..end−1 (the higher-index touched vertex is excluded);
+    ///  2. more than 3 vertices required (:477), else null (caller reports it);
+    ///  3. CABCurve.MakePointMinimumSpacing 1.6 m — midpoint densification, NO smoothing (the
+    ///     old Chaikin pass cut ≈9 m off a 90° corner on 50 m legs);
+    ///  4. CABCurve.CalculateHeadings — central difference;
+    ///  5. <paramref name="meanHeading"/> = circular mean of the point headings (:484-494),
+    ///     taken BEFORE the tails like AOG, for the "Cu {deg}°" name;
+    ///  6. straight tails: AOG AddFirstLastPoints adds 99 × 1 m along the end headings; we keep
+    ///     ExtendCurvePastBoundary (raycast to the fence + 20 m so the U-turn generator finds
+    ///     a crossing) but cap each tail at AOG's 99 m, which also stops the run-along-the-fence
+    ///     case (tangent parallel to the fence → crossing hundreds of metres away) producing a
+    ///     giant tail;
+    ///  7. headings recomputed over the finished list (:499).
+    /// </summary>
     private List<Vec3>? BuildBoundarySegmentCurve(
-        System.Collections.Generic.List<Models.Base.Vec2> ring, int ai, int bi, int step)
+        System.Collections.Generic.List<Models.Base.Vec3> ring, int start, int end, out double meanHeading)
     {
+        meanHeading = 0;
         int n = ring.Count;
-        var seg = new System.Collections.Generic.List<Models.Base.Vec3>();
-        for (int i = ai; ; i = (i + step + n) % n)
+        if (n < 2 || start == end) return null;
+        var seg = new List<Vec3>();
+        for (int i = start; i != end; i = (i + 1) % n)
         {
-            seg.Add(new Models.Base.Vec3(ring[i].Easting, ring[i].Northing, 0));
-            if (i == bi) break;
+            var p = ring[i];
+            seg.Add(new Vec3(p.Easting, p.Northing, p.Heading));
+            if (seg.Count > n) break; // can't happen (start != end), belt and braces
         }
-        if (seg.Count < 3) return null;
-        var smoothed = Models.Guidance.CurveProcessing.ChaikinsSmooth(seg, 3);
-        var headed = Models.Guidance.CurveProcessing.CalculateHeadings(smoothed);
-        return ExtendCurvePastBoundary(headed);
+        if (seg.Count <= 3) return null;
+        var dense = Models.Guidance.CurveProcessing.MakePointMinimumSpacing(seg, BoundaryCurveMaxSpacing);
+        Models.Guidance.CurveProcessing.CalculateCentralHeadings(dense);
+        meanHeading = Models.Guidance.CurveProcessing.ComputeAverageHeading(dense);
+        var extended = ExtendCurvePastBoundary(dense, maxTailMeters: BoundaryCurveMaxTailMeters);
+        Models.Guidance.CurveProcessing.CalculateCentralHeadings(extended);
+        return extended;
     }
+
+    /// <summary>AOG CABCurve.MakePointMinimumSpacing argument in BtnMakeCurve_Click (FormABDraw.cs:480).</summary>
+    private const double BoundaryCurveMaxSpacing = 1.6;
+    /// <summary>AOG CABCurve.AddFirstLastPoints tail length with a boundary (CABCurve.cs:1610-1626: 1..99 m).</summary>
+    private const double BoundaryCurveMaxTailMeters = 99.0;
 
     private void InitializeTrackCommands()
     {
@@ -1914,8 +2008,12 @@ public partial class MainViewModel
     /// </summary>
     /// <param name="points">Original curve points</param>
     /// <param name="marginMeters">How far past the boundary to extend (default 20m)</param>
+    /// <param name="maxTailMeters">Cap on each tail's length measured from the curve's end point
+    /// (default unlimited). The boundary-segment curve passes AOG's 99 m so a tangent that runs
+    /// along the fence can't grow a tail to the far side of the field.</param>
     /// <returns>New list with extended endpoints</returns>
-    private List<Vec3> ExtendCurvePastBoundary(List<Vec3> points, double marginMeters = 20.0)
+    private List<Vec3> ExtendCurvePastBoundary(List<Vec3> points, double marginMeters = 20.0,
+        double maxTailMeters = double.PositiveInfinity)
     {
         if (points.Count < 2)
         {
@@ -1991,6 +2089,9 @@ public partial class MainViewModel
                     extendEnd = Math.Max(extendEnd, t + marginMeters);
             }
         }
+
+        if (extendStart > maxTailMeters) extendStart = maxTailMeters;
+        if (extendEnd > maxTailMeters) extendEnd = maxTailMeters;
 
         // Create extended start point
         double sinStart2 = Math.Sin(startHeading);

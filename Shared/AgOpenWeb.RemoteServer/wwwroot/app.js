@@ -2052,9 +2052,16 @@ function startRecordCurve() {              // GPS: record by driving — Set Sta
 // Ring-aware snap, mirroring the host (and AOG FormABDraw.cs:625-661): tap A searches
 // EVERY ring (outer + inners); tap B searches only the ring A landed on, so the preview
 // dots show exactly the vertices the host will use. onlyRing = index into scene.boundaries.
+// The host snaps on a DENSE pick ring (P1.1: AOG CFenceLine.FixFenceLine density — 1.1 m
+// under 20 ha / 2.2 m under 40 ha / 3.3 m, halved for inner rings), not the sparse vertices
+// the scene carries, so the same densification is replicated here (densePickRings) before
+// searching; otherwise a tap 30 m along a straight side would preview at the corner while
+// the host lands it on the side. Known residual mismatch: for the CURVE the host snaps on
+// the boundary inset by w/2 + U/2 (not the fence), so the dots sit on the fence a few metres
+// outside the curve's real A/B — pre-existing, and the inset is out of scope here.
 function nearestBoundaryPt(e, n, onlyRing) {
   let best = null, bd = Infinity, bestRing = -1;
-  const bs = scene && scene.boundaries;
+  const bs = densePickRings();
   if (bs) for (let r = 0; r < bs.length; r++) {
     if (onlyRing != null && r !== onlyRing) continue;
     for (const p of bs[r]) {
@@ -2063,6 +2070,48 @@ function nearestBoundaryPt(e, n, onlyRing) {
     }
   }
   return best ? { e: best.e, n: best.n, ring: bestRing } : { e, n, ring: -1 };
+}
+// Dense pick rings, cached per scene.boundaries instance (a new Scene brings a new array;
+// the same array means the rings haven't changed, so the cache is reused).
+let _densePickSrc = null, _densePickRings = null;
+function densePickRings() {
+  const bs = scene && scene.boundaries;
+  if (!bs) return null;
+  if (bs !== _densePickSrc) {
+    _densePickSrc = bs;
+    _densePickRings = bs.map((ring, r) => densifyPickRing(ring, r));
+  }
+  return _densePickRings;
+}
+// Exact port of the host's FenceLineService.FixSpacing (= AOG CFenceLine.FixFenceLine,
+// CFenceLine.cs:48-114) minus headings: spacing from the ring's OWN shoelace area (as AOG
+// uses each fence's area), two midpoint-insertion passes at 1.5× then 1.6× spacing that
+// wrap around the closing segment (inserting at index 0 when it is the last→first gap, as
+// the original does), then a thinning pass that drops points closer than 0.9× spacing.
+// Same insertion order and rescans as the host, so the vertex set matches bit-for-bit
+// (floating-point midpoints of identical inputs). Rings under 3 points pass through.
+function densifyPickRing(ring, ringIndex) {
+  if (!ring || ring.length < 3) return ring;
+  const area = shoelace(ring);
+  let spacing = area < 200000 ? 1.1 : area < 400000 ? 2.2 : 3.3;
+  if (ringIndex > 0) spacing *= 0.5;
+  const pts = ring.map(p => ({ e: p.e, n: p.n }));
+  const dist = (a, b) => Math.sqrt((a.e - b.e) * (a.e - b.e) + (a.n - b.n) * (a.n - b.n));
+  for (const k of [1.5, 1.6]) {
+    const max = spacing * k;
+    for (let i = 0; i < pts.length; i++) {
+      let j = i + 1; if (j === pts.length) j = 0;
+      if (dist(pts[i], pts[j]) > max) {
+        pts.splice(j, 0, { e: (pts[i].e + pts[j].e) / 2, n: (pts[i].n + pts[j].n) / 2 });
+        i--;
+      }
+    }
+  }
+  const min = spacing * 0.9;
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (dist(pts[i], pts[i + 1]) < min) { pts.splice(i + 1, 1); i--; }
+  }
+  return pts;
 }
 function startBoundaryCurve() {
   abFlow = 'boundaryPick'; drawPts = [];
