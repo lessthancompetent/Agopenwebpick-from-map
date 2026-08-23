@@ -74,6 +74,9 @@ public partial class MainViewModel
     private Models.Track.Track? _bndSegTrack;
     private System.Collections.Generic.List<Models.Base.Vec2>? _bndSegRing;
     private int _bndSegAi, _bndSegBi, _bndSegStep;
+    // The track that was selected BEFORE the Bnd. Curve was created, so Cancel in the trim
+    // phase can put the operator back where they were (P2.4).
+    private Models.Track.Track? _bndSegPrevSelected;
 
     /// <summary>
     /// Boundary curve from two tapped points (remote/web "Bnd. Curve"): snap A and B to the
@@ -82,6 +85,13 @@ public partial class MainViewModel
     /// </summary>
     public void RemoteCreateBoundaryCurveSegment(double aE, double aN, double bE, double bN)
     {
+        // A new pick always supersedes the last one. Clear the trim/cancel state BEFORE any
+        // early return, so a failed creation can never leave a previous curve silently
+        // cancellable (track.boundarySegCancel would delete the wrong track) or trimmable.
+        _bndSegTrack = null;
+        _bndSegRing = null;
+        _bndSegPrevSelected = null;
+
         var boundary = State.Field.CurrentBoundary?.OuterBoundary;
         if (boundary?.Points == null || boundary.Points.Count < 3)
         {
@@ -133,6 +143,7 @@ public partial class MainViewModel
             // guidance follows it directly (pass 0) instead of free-drive snapping to an inner pass.
             NoPassOffset = true
         };
+        _bndSegPrevSelected = SelectedTrack; // remembered for RemoteBoundarySegCancel
         SavedTracks.Add(track);
         SelectedTrack = track;
         SaveTracksToFile();
@@ -358,6 +369,127 @@ public partial class MainViewModel
         OnTrackVisibilityChanged();
         double newArc = dir > 0 ? arc + moved : arc - moved;
         StatusMessage = $"{end} end {(dir > 0 ? "extended" : "shortened")} {moved:F0} m ({newArc:F0} m along boundary)";
+    }
+
+    /// <summary>
+    /// Cancel in the Bnd. Curve trim phase (P2.4): discard the curve RemoteCreateBoundaryCurveSegment
+    /// just made and put the selection back on whatever was selected before it (if that track
+    /// still exists), so a mis-tapped curve never lingers as a saved track. "Done" is client-only —
+    /// the curve was committed at creation, so Done has nothing to send.
+    /// </summary>
+    public void RemoteBoundarySegCancel()
+    {
+        var track = _bndSegTrack;
+        if (track == null || !SavedTracks.Contains(track))
+        {
+            _bndSegTrack = null;
+            _bndSegRing = null;
+            _bndSegPrevSelected = null;
+            StatusMessage = "No boundary curve to cancel";
+            return;
+        }
+        var prev = _bndSegPrevSelected;
+        var restore = prev != null && SavedTracks.Contains(prev) ? prev : null;
+        // Only move the selection when it still sits on the discarded curve (or nothing); if
+        // the operator picked some other track meanwhile, leave that choice alone.
+        if (SelectedTrack == null || ReferenceEquals(SelectedTrack, track))
+            SelectedTrack = restore;
+        SavedTracks.Remove(track);
+        SaveTracksToFile();
+        _bndSegTrack = null;
+        _bndSegRing = null;
+        _bndSegPrevSelected = null;
+        StatusMessage = restore != null
+            ? $"Boundary curve discarded — back on '{restore.Name}'"
+            : "Boundary curve discarded";
+    }
+
+    /// <summary>
+    /// AgOpenGPS "A++" / "B++" (6.8.6 FormABDraw.cs btnALength_Click :845-860 / btnBLength_Click
+    /// :862-876) on the SELECTED track: a straight run-out of <paramref name="metres"/> along the
+    /// end point's own heading — it never follows the fence. Per press AOG copies the end point and
+    /// adds 49 points at 1, 2 … 49 m: A end = behind Points[0] (pt −= (sin h, cos h)·i, each
+    /// Insert(0) so the list stays ordered 49 m … 1 m, P0 …); B end = ahead of the ORIGINAL last
+    /// point (captured once, Add). Inserted points inherit that end's heading; the track's
+    /// heading/name are not recomputed (AOG leaves them alone). Unbounded and repeatable: each
+    /// press adds another run-out. Refused for an AB line (2 points) — AOG greys the buttons
+    /// unless mode == Curve (:833-842) — and for a closed/polygon track, which has no ends.
+    /// Default 49 m (AOG's loop 1..49).
+    /// </summary>
+    public void RemoteExtendTrackEnd(bool isA, double metres = 49)
+    {
+        var track = SelectedTrack;
+        if (track == null)
+        {
+            StatusMessage = "No track selected";
+            return;
+        }
+        if (track.Points.Count < 2)
+        {
+            StatusMessage = "Selected track has no line to extend";
+            return;
+        }
+        if (track.Points.Count == 2)
+        {
+            StatusMessage = "A++/B++ only extend curves — an AB line is already infinite";
+            return;
+        }
+        if (track.IsClosed)
+        {
+            StatusMessage = "Can't extend a closed track";
+            return;
+        }
+        if (double.IsNaN(metres) || double.IsInfinity(metres) || metres <= 0) metres = 49;
+        int count = (int)Math.Ceiling(metres);
+        if (count > 1000) count = 1000; // sanity clamp on a silly wire arg; AOG's press is 49
+
+        var old = track.Points;
+        var end = isA ? old[0] : old[old.Count - 1];
+        double heading = TrackEndHeading(old, isA, end.Heading);
+        double sinH = Math.Sin(heading), cosH = Math.Cos(heading);
+
+        // Build a NEW list and swap it in (the pipeline + scene projector read track.Points on
+        // their own threads; mutating the live list in place would race them).
+        var pts = new List<Vec3>(old.Count + count);
+        if (isA)
+        {
+            // AOG: for i = 1..49 Insert(0, P0 − dir·i) → final order 49 m, 48 m … 1 m behind, P0, …
+            for (int i = count; i >= 1; i--)
+                pts.Add(new Vec3(end.Easting - sinH * i, end.Northing - cosH * i, heading));
+            pts.AddRange(old);
+        }
+        else
+        {
+            pts.AddRange(old);
+            for (int i = 1; i <= count; i++)
+                pts.Add(new Vec3(end.Easting + sinH * i, end.Northing + cosH * i, heading));
+        }
+        track.Points = pts;
+        SaveTracksToFile();
+        // SelectedTrack is unchanged (same reference), so the setter's sync doesn't fire —
+        // push the pipeline explicitly so guidance re-searches the lengthened line.
+        SyncGuidanceStateToPipeline();
+        StatusMessage = $"{(isA ? "A" : "B")} end extended {count} m";
+        _logger.LogDebug($"[ExtendEnd] '{track.Name}' {(isA ? "A" : "B")} +{count} m along {heading * 180 / Math.PI:F1}° → {pts.Count} points");
+    }
+
+    /// <summary>Heading to extend along at one end of a curve. AOG uses the end point's STORED
+    /// heading; ours are the same (CalculateHeadings) for every curve we build, but a track with
+    /// every heading exactly 0 (points imported/built without headings) would extend due north
+    /// whatever its shape — for those, derive the end heading from the end segment instead
+    /// (atan2 of P1−P0 at A, Pn−Pn−1 at B). A zero-length end segment keeps the stored value.</summary>
+    private static double TrackEndHeading(List<Vec3> pts, bool isA, double stored)
+    {
+        bool allZero = true;
+        foreach (var p in pts) { if (p.Heading != 0) { allZero = false; break; } }
+        if (!allZero) return stored;
+        Vec3 from = isA ? pts[0] : pts[pts.Count - 2];
+        Vec3 to = isA ? pts[1] : pts[pts.Count - 1];
+        double dE = to.Easting - from.Easting, dN = to.Northing - from.Northing;
+        if (dE * dE + dN * dN < 1e-12) return stored;
+        double h = Math.Atan2(dE, dN);
+        if (h < 0) h += 2.0 * Math.PI;
+        return h;
     }
 
     /// <summary>Ring arc ai→bi (walking by step) → drivable open curve. Rounds the boundary's

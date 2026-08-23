@@ -695,6 +695,23 @@ public static partial class RemoteServerWiring
                                         vm.RemoteBoundarySegExtend(bs[0], bsd);
                                     return;
                                 }
+                                case "track.boundarySegCancel": // Cancel in the Bnd. Curve trim phase:
+                                    vm.RemoteBoundarySegCancel(); // discard the new curve, restore the
+                                    return;                       // previous selection. Tier-1.
+                                case "track.extendEnd": // AOG A++/B++ (FormABDraw.cs:845-876): straight
+                                {                       // run-out on the SELECTED curve. arg = "A|B[,metres]"
+                                    var xe = arg.Split(','); // (default 49). Tier-2: mutates the guidance line.
+                                    string xEnd = xe.Length >= 1 ? xe[0].Trim() : "";
+                                    bool xIsA = string.Equals(xEnd, "A", System.StringComparison.OrdinalIgnoreCase);
+                                    bool xIsB = string.Equals(xEnd, "B", System.StringComparison.OrdinalIgnoreCase);
+                                    if (!xIsA && !xIsB) return;
+                                    double xm = 49;
+                                    if (xe.Length >= 2 && double.TryParse(xe[1], num, inv, out var xmv)
+                                        && !double.IsNaN(xmv) && !double.IsInfinity(xmv) && xmv > 0)
+                                        xm = xmv;
+                                    vm.RemoteExtendTrackEnd(xIsA, xm);
+                                    return;
+                                }
                                 case "flag.placeAt": // Phase MT map-tap. arg = "easting,northing"
                                 {                     // (m, field-local, from s2w). Tier-1 marker.
                                     var fp = arg.Split(',');
