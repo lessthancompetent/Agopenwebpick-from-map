@@ -171,6 +171,13 @@ public interface IAutoSteerService
     SteerModuleData LastSteerData { get; }
 
     /// <summary>
+    /// Age of <see cref="LastSteerData"/>. <see cref="TimeSpan.MaxValue"/> until the
+    /// steer module has reported at least once — lets callers tell "live reading" from
+    /// the zero-valued default.
+    /// </summary>
+    TimeSpan LastSteerDataAge { get; }
+
+    /// <summary>
     /// Latest sensor data from module (PGN 250).
     /// Contains pressure/current sensor reading.
     /// </summary>

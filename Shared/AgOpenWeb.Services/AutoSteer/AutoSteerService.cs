@@ -313,6 +313,12 @@ public class AutoSteerService : IAutoSteerService
     /// <summary>Latest steer data from module (PGN 253).</summary>
     public SteerModuleData LastSteerData => _lastSteerData;
 
+    private DateTime _lastSteerDataUtc = DateTime.MinValue;
+    /// <summary>Age of <see cref="LastSteerData"/>; <see cref="TimeSpan.MaxValue"/> until the module first reports.</summary>
+    public TimeSpan LastSteerDataAge => _lastSteerDataUtc == DateTime.MinValue
+        ? TimeSpan.MaxValue
+        : DateTime.UtcNow - _lastSteerDataUtc;
+
     /// <summary>Latest sensor data from module (PGN 250).</summary>
     public SensorModuleData LastSensorData => _lastSensorData;
 
@@ -380,6 +386,7 @@ public class AutoSteerService : IAutoSteerService
             _lastSteerData.RemoteButtonPressed != steerData.RemoteButtonPressed;
 
         _lastSteerData = steerData;
+        _lastSteerDataUtc = DateTime.UtcNow;
 
         // Update vehicle state with actual angle from WAS
         _state.ActualSteerAngle = steerData.ActualSteerAngle;

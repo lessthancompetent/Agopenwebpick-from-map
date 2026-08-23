@@ -444,7 +444,16 @@ public partial class AutoSteerConfigViewModel : ObservableObject
             // Calculate new WAS offset to make current angle read zero.
             // Module formula: angle = (rawCounts - wasOffset) / countsPerDegree
             // To zero: newOffset = currentOffset + (currentAngle * countsPerDegree)
-            var angleCorrection = (int)Math.Round(_smoothedActualAngle * AutoSteer.CountsPerDegree);
+            //
+            // Read the LIVE module angle from the steer service, not the panel's
+            // smoothed copy. The smoothed value is only fed by OnUdpDataReceived,
+            // which is subscribed on IsPanelVisible — a native-panel hook the web UI
+            // never sets — so on the web UI it sat at 0 forever and Zero WAS silently
+            // added 0 to the offset ("can't zero WAS").
+            double liveAngle = _autoSteerService is { } svc && svc.LastSteerDataAge < TimeSpan.FromSeconds(2)
+                ? svc.LastSteerData.ActualSteerAngle
+                : _smoothedActualAngle;
+            var angleCorrection = (int)Math.Round(liveAngle * AutoSteer.CountsPerDegree);
             AutoSteer.WasOffset += angleCorrection;
             Config.MarkChanged();
 
