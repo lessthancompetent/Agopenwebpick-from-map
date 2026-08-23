@@ -677,6 +677,17 @@ public static partial class RemoteServerWiring
                                         vm.RemoteCreateBoundaryCurveSegment(caE, caN, cbE, cbN);
                                     return;
                                 }
+                                case "track.boundaryAB": // "Bnd. AB": tap A + B on the boundary → straight AB
+                                {                        // through the two snapped fence vertices (AOG
+                                    var ba = arg.Split(','); // FormABDraw BtnMakeABLine). arg = "aE,aN,bE,bN". Tier-1.
+                                    if (ba.Length >= 4
+                                        && double.TryParse(ba[0], num, inv, out var baE)
+                                        && double.TryParse(ba[1], num, inv, out var baN)
+                                        && double.TryParse(ba[2], num, inv, out var bbE)
+                                        && double.TryParse(ba[3], num, inv, out var bbN))
+                                        vm.RemoteCreateBoundaryAB(baE, baN, bbE, bbN);
+                                    return;
+                                }
                                 case "track.boundarySegExtend": // A++/A−−/B++/B−− after a Bnd. Curve:
                                 {                               // arg = "A,1"|"A,-1"|"B,1"|"B,-1". Tier-1.
                                     var bs = arg.Split(',');

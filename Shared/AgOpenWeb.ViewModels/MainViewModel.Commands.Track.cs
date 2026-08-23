@@ -145,6 +145,146 @@ public partial class MainViewModel
     }
 
     /// <summary>
+    /// Straight AB line from two tapped boundary points (remote/web "Bnd. AB"). Mirrors
+    /// AgOpenGPS 6.8.6 FormABDraw.BtnMakeABLine_Click (FormABDraw.cs:531-580) plus its two-tap
+    /// vertex search (:625-661):
+    ///  - A snaps to the nearest RAW fence vertex of ANY ring (outer + every inner), recording
+    ///    the ring (:625-646); B snaps to the nearest vertex of THAT SAME ring (:647-661).
+    ///  - AOG's index-ordering rule (:534-547) decides which vertex is A: when the short way
+    ///    round does not cross the index seam (|start−end| ≤ n/2) start > end, else start < end.
+    ///    So the SAME two taps give the SAME line whichever order they were tapped in.
+    ///  - heading = atan2(fence[end] − fence[start]) wrapped to [0, 2π) (:550-553); name
+    ///    "AB {deg:F1}°" (:570-571).
+    /// Placement: AOG stores the line ON the fence, but its guidance references a swath EDGE
+    /// (CABLine.cs:118 `distanceFromRefLine −= 0.5·(w−o)`, :140-142 `distAway += 0.5·(w−o)`)
+    /// so pass 0 runs half a swath inside with the tool edge on the fence. Our guidance is
+    /// centre-convention, so to get the same net result the line is shifted (w−o)/2 toward the
+    /// field interior (outer ring: the side the ring's centroid lies on; inner ring: the side
+    /// AWAY from the hole's centroid), then both ends are extended past the boundary like every
+    /// other AB creator so the U-turn generator finds a fence crossing.
+    /// </summary>
+    public void RemoteCreateBoundaryAB(double aE, double aN, double bE, double bN)
+    {
+        var bnd = State.Field.CurrentBoundary;
+        var outer = bnd?.OuterBoundary;
+        if (bnd == null || outer?.Points == null || outer.Points.Count < 3)
+        {
+            StatusMessage = "Load a field with a boundary first";
+            return;
+        }
+
+        // bndList order: [0] = outer, then every inner ring (FormABDraw.cs:629 loops them all).
+        var rings = new System.Collections.Generic.List<BoundaryPolygon> { outer };
+        foreach (var inner in bnd.InnerBoundaries)
+            if (inner?.Points != null && inner.Points.Count >= 3) rings.Add(inner);
+
+        // Tap A: brute-force squared distance over every vertex of every ring (:625-646).
+        int ringIdx = 0, start = 0;
+        double best = double.MaxValue;
+        for (int j = 0; j < rings.Count; j++)
+        {
+            var pts = rings[j].Points;
+            for (int i = 0; i < pts.Count; i++)
+            {
+                double dx = pts[i].Easting - aE, dy = pts[i].Northing - aN;
+                double d = dx * dx + dy * dy;
+                if (d < best) { best = d; ringIdx = j; start = i; }
+            }
+        }
+
+        // Tap B: only the ring A landed on (:647-661).
+        var fence = rings[ringIdx].Points;
+        int n = fence.Count;
+        int end = 0;
+        best = double.MaxValue;
+        for (int i = 0; i < n; i++)
+        {
+            double dx = fence[i].Easting - bE, dy = fence[i].Northing - bN;
+            double d = dx * dx + dy * dy;
+            if (d < best) { best = d; end = i; }
+        }
+
+        if (start == end)
+        {
+            StatusMessage = "Pick two different points on the boundary";
+            return;
+        }
+
+        // Ordering rule (:534-547): index order, not tap order, decides which vertex is A.
+        if (Math.Abs(start - end) <= n * 0.5)
+        {
+            if (start < end) (end, start) = (start, end);
+        }
+        else
+        {
+            if (start > end) (end, start) = (start, end);
+        }
+
+        var fa = fence[start];
+        var fb = fence[end];
+        double heading = Math.Atan2(fb.Easting - fa.Easting, fb.Northing - fa.Northing);
+        if (heading < 0) heading += 2.0 * Math.PI;
+        double sinH = Math.Sin(heading), cosH = Math.Cos(heading);
+
+        // Interior side: sign of cross(dir, centroid − A). Positive = centroid left of travel.
+        var (cE, cN) = RingCentroid(fence);
+        double cross = sinH * (cN - fa.Northing) - cosH * (cE - fa.Easting);
+        bool shiftLeft = ringIdx == 0 ? cross >= 0 : cross < 0; // inner ring: away from the hole
+        // Left-perpendicular of (sinH, cosH) is (−cosH, sinH); right is (cosH, −sinH).
+        double halfSwath = (ConfigStore.ActualToolWidth - ConfigStore.Tool.Overlap) * 0.5;
+        if (halfSwath < 0) halfSwath = 0;
+        double offE = (shiftLeft ? -cosH : cosH) * halfSwath;
+        double offN = (shiftLeft ? sinH : -sinH) * halfSwath;
+
+        var (extendedA, extendedB) = ExtendABLinePastBoundary(
+            new Vec3(fa.Easting + offE, fa.Northing + offN, heading),
+            new Vec3(fb.Easting + offE, fb.Northing + offN, heading));
+
+        double deg = heading * 180.0 / Math.PI;
+        // AOG FormABDraw.cs:570-571 uses plain ToString (general format): "AB 270°", "AB 45.5°" — never a forced ".0".
+        string degText = Math.Round(deg, 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var track = new Models.Track.Track
+        {
+            Name = "AB " + degText + "°",
+            Points = new System.Collections.Generic.List<Models.Base.Vec3> { extendedA, extendedB },
+            Type = Models.Track.TrackType.ABLine,
+            IsVisible = true,
+            IsClosed = false,
+            NoPassOffset = false // normal parallel passes, unlike the driven-as-is boundary curve
+        };
+        SavedTracks.Add(track);
+        SelectedTrack = track; // disengages autosteer if engaged — intended for a new reference line
+        SaveTracksToFile();
+        string ringName = ringIdx == 0 ? "outer" : $"inner {ringIdx}";
+        StatusMessage = $"Created boundary AB {degText}° ({ringName} ring)";
+        _logger.LogDebug($"[BoundaryAB] ring={ringIdx} start={start} end={end} heading={deg:F1}° shift={halfSwath:F2}m {(shiftLeft ? "left" : "right")}");
+    }
+
+    /// <summary>Area-weighted (shoelace) centroid of a closed ring; falls back to the vertex
+    /// mean for a degenerate (zero-area) ring.</summary>
+    private static (double e, double n) RingCentroid(System.Collections.Generic.List<BoundaryPoint> pts)
+    {
+        double area2 = 0, cE = 0, cN = 0;
+        int n = pts.Count;
+        for (int i = 0; i < n; i++)
+        {
+            var p = pts[i];
+            var q = pts[(i + 1) % n];
+            double w = p.Easting * q.Northing - q.Easting * p.Northing;
+            area2 += w;
+            cE += (p.Easting + q.Easting) * w;
+            cN += (p.Northing + q.Northing) * w;
+        }
+        if (Math.Abs(area2) < 1e-9)
+        {
+            double mE = 0, mN = 0;
+            foreach (var p in pts) { mE += p.Easting; mN += p.Northing; }
+            return (mE / n, mN / n);
+        }
+        return (cE / (3.0 * area2), cN / (3.0 * area2));
+    }
+
+    /// <summary>
     /// A++/A−−/B++/B−− for the last boundary-segment curve: walk one end ±5 m along the
     /// boundary ring (wrapping around it) and rebuild the SAME track in place so the map
     /// shows it grow/shrink. end = "A"/"B"; dir = +1 extend, −1 shorten. Clamped so the

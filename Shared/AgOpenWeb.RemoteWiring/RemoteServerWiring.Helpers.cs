@@ -16,7 +16,7 @@ public static partial class RemoteServerWiring
         "track.drawUndo", "track.drawCancel", "track.aPlus", "track.driveAB",
         "track.recordCurve", "track.finishCurve", "track.setABGps",
         "track.createFromBoundary", "track.boundaryCurve", "track.boundaryCurveSeg",
-        "track.boundarySegExtend", "track.allEdges",
+        "track.boundaryAB", "track.boundarySegExtend", "track.allEdges",
         "track.setVisible", "track.toggleRecPaths", "track.editSave",
         // Route Planner reference-track setup: plot an AB from two map taps and pick
         // which hand-made track to plan along. Both are planning/selection (they create

@@ -210,6 +210,8 @@
     #draw-toolbar button:active { background: rgba(50,80,120,0.95); }
     #draw-finish, #draw-setpoint { border-color: rgba(110,220,150,0.7) !important; color: #b6f0cd !important; }
     #draw-cancel { border-color: rgba(230,120,110,0.7) !important; color: #f3c4bd !important; }
+    #draw-bnd-ab, #draw-bnd-curve { border-color: rgba(110,220,150,0.7) !important; color: #b6f0cd !important; }
+    #draw-bnd-canceltouch { border-color: rgba(240,190,90,0.7) !important; color: #f5dfae !important; }
     /* On-screen U-Turn / Lateral buttons — bare glyphs over the map (native look), docked
        upper-left: 30px right of the left-nav bar (~66px wide) and 40px below the status
        bar (top var(--sat) + 46px tall). Container is click-through; only the glyphs are
@@ -1333,11 +1335,16 @@
   <div id="ab-dot-labels"></div>
   <div id="block-labels"></div>
   <!-- Phase MT — draw-track toolbar. Shown while drawing an AB/curve on the map.
-       Undo/Finish appear only in curve mode; Cancel always. The .draw-ext row appears
+       Undo/Finish appear only in curve mode; Cancel always. The .draw-bnd row appears once
+       two boundary points are picked (Bnd. AB/Curve): make an AB line or a Curve through
+       them, or Cancel touch to pick again (AOG FormABDraw). The .draw-ext row appears
        only after a Bnd. Curve is created: walk each end along the boundary, 5 m/tap. -->
   <div id="draw-toolbar">
     <button id="draw-setpoint">Set Point</button>
     <button id="draw-undo">Undo</button>
+    <button class="draw-bnd" id="draw-bnd-ab" title="Straight AB line through the two picked boundary points">AB</button>
+    <button class="draw-bnd" id="draw-bnd-curve" title="Curve along the boundary between the two picked points; then A++/B++ to trim">Curve</button>
+    <button class="draw-bnd" id="draw-bnd-canceltouch" title="Clear the two picked points and pick again">Cancel touch</button>
     <button class="draw-ext" id="draw-exta-plus" title="Extend the A end along the boundary, 5 m per tap">A++</button>
     <button class="draw-ext" id="draw-exta-minus" title="Shorten the A end along the boundary, 5 m per tap">A−−</button>
     <button class="draw-ext" id="draw-extb-minus" title="Shorten the B end along the boundary, 5 m per tap">B−−</button>
@@ -3594,7 +3601,7 @@
       <div class="dlg-sub">From Field Boundary</div>
       <div class="dlg-modes">
         <button class="dlg-mode" data-qab="boundaryEdge" title="AB line along the longest boundary edge"><span class="dlg-bigtxt">AB</span><span>Longest Edge</span></button>
-        <button class="dlg-mode" data-qab="boundaryCurve" title="Curve along the boundary between two tapped points; then A++/B++ to extend"><img src="/icons/ABTrackCurve.png" alt=""><span>Bnd. Curve</span></button>
+        <button class="dlg-mode" data-qab="boundaryCurve" title="Tap two points on the boundary, then choose a straight AB line through them or a curve along the boundary between them"><img src="/icons/ABTrackCurve.png" alt=""><span>Bnd. AB/Curve</span></button>
         <button class="dlg-mode" data-qab="allEdges" title="AB line for every boundary edge"><span class="dlg-bigtxt">All</span><span>All Edges</span></button>
       </div>
       <div class="dlg-sub">Draw on Map</div>

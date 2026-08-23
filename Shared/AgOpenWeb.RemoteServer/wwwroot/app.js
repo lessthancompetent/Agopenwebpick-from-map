@@ -1952,7 +1952,7 @@ document.getElementById('bn-abmenu').addEventListener('pointerdown', e => { e.st
 // creation flow (any of the four) that the bottom toolbar + hint follow.
 let drawMode = null;     // 'straight' | 'curve' (map-tap modes only) — drives the preview
 let drawPts = [];        // [{e,n}] captured so far — preview only (host holds the real list)
-let abFlow = null;       // 'straight' | 'curve' | 'driveAB' | 'recordCurve' | null
+let abFlow = null;       // 'straight' | 'curve' | 'driveAB' | 'recordCurve' | 'boundaryPick' | 'bndSegExtend' | null
 let driveStep = 0;       // Drive-AB / record-curve step: 0 → next press sets A/Start, 1 → sets B/End
 let curveMarks = [];     // client-side path dots dropped while driving a record-curve (Set Start→End)
 let _lastCurveMark = null;
@@ -2009,12 +2009,15 @@ function renderAbDotLabels() {
 }
 // Configure the bottom toolbar buttons for the active flow. ext = the A++/A−−/B−−/B++
 // boundary-curve trim row (replaces Cancel — the curve already exists, Done closes).
-function showAbBar(setPoint, undo, finish, ext) {
+// bnd = the AB / Curve / Cancel touch choice row shown once two boundary points are picked
+// (AOG FormABDraw's btnMakeABLine / btnMakeCurve / btnCancelTouch); Cancel stays = leave the tool.
+function showAbBar(setPoint, undo, finish, ext, bnd) {
   drawBar.querySelector('#draw-setpoint').style.display = setPoint ? '' : 'none';
   drawBar.querySelector('#draw-undo').style.display = undo ? '' : 'none';
   drawBar.querySelector('#draw-finish').style.display = finish ? '' : 'none';
   drawBar.querySelector('#draw-finish').textContent = 'Finish'; // callers wanting Save/Done set it after
   for (const b of drawBar.querySelectorAll('.draw-ext')) b.style.display = ext ? '' : 'none';
+  for (const b of drawBar.querySelectorAll('.draw-bnd')) b.style.display = bnd ? '' : 'none';
   drawBar.querySelector('#draw-cancel').style.display = ext ? 'none' : '';
   drawBar.classList.add('show');
 }
@@ -2039,35 +2042,65 @@ function startRecordCurve() {              // GPS: record by driving — Set Sta
   document.getElementById('draw-setpoint').textContent = 'Set Point A';
   hintEl.classList.add('show'); setAbHint();
 }
-// "Bnd. Curve" — tap point A then point B on the boundary; the host walks the shorter arc
-// between them and builds a curve following the boundary. Points snap to the nearest boundary
-// vertex for display; the host re-snaps authoritatively.
-function nearestBoundaryPt(e, n) {
-  let best = null, bd = Infinity;
+// "Bnd. AB/Curve" — tap point A then point B on the boundary, THEN choose what to make
+// (mirrors AgOpenGPS FormABDraw: the second tap is a selection, not a commit). "AB" sends
+// track.boundaryAB (straight line through the two snapped fence vertices), "Curve" sends
+// track.boundaryCurveSeg (the host walks the shorter arc between them), "Cancel touch"
+// clears the two dots and stays in the tool (btnCancelTouch). Points snap to the nearest
+// boundary vertex for display; the host re-snaps authoritatively.
+// Ring-aware snap, mirroring the host (and AOG FormABDraw.cs:625-661): tap A searches
+// EVERY ring (outer + inners); tap B searches only the ring A landed on, so the preview
+// dots show exactly the vertices the host will use. onlyRing = index into scene.boundaries.
+function nearestBoundaryPt(e, n, onlyRing) {
+  let best = null, bd = Infinity, bestRing = -1;
   const bs = scene && scene.boundaries;
-  if (bs) for (const ring of bs) for (const p of ring) {
-    const dx = p.e - e, dy = p.n - n, d = dx * dx + dy * dy;
-    if (d < bd) { bd = d; best = p; }
+  if (bs) for (let r = 0; r < bs.length; r++) {
+    if (onlyRing != null && r !== onlyRing) continue;
+    for (const p of bs[r]) {
+      const dx = p.e - e, dy = p.n - n, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = p; bestRing = r; }
+    }
   }
-  return best ? { e: best.e, n: best.n } : { e, n };
+  return best ? { e: best.e, n: best.n, ring: bestRing } : { e, n, ring: -1 };
 }
 function startBoundaryCurve() {
-  abFlow = 'boundaryCurve'; drawPts = [];
-  showAbBar(false, false, false);          // draw toolbar shows just Cancel
+  abFlow = 'boundaryPick'; drawPts = [];
+  showAbBar(false, false, false);          // draw toolbar shows just Cancel until A and B are picked
   startMapTap({ hint: 'Tap point A on the boundary', onTap: boundaryCurveTap });
 }
 function boundaryCurveTap(e, n) {
-  drawPts.push(nearestBoundaryPt(e, n));   // snap A/B to the nearest boundary vertex (dot shown)
+  drawPts.push(nearestBoundaryPt(e, n, drawPts.length ? drawPts[0].ring : null));   // A: any ring; B: A's ring
   if (drawPts.length < 2) { hintEl.textContent = 'Tap point B on the boundary'; return; }
+  // Two points picked — review before commit: the orange A / blue B dots stay on the map
+  // while the operator chooses AB / Curve / Cancel touch (or Cancel to leave the tool).
+  endMapTap();                             // taps done — the buttons drive the rest
+  showAbBar(false, false, false, false, true);
+  hintEl.textContent = 'Make an AB line or a Curve through A and B'; hintEl.classList.add('show');
+}
+function boundaryPickArg() {
   const a = drawPts[0], b = drawPts[1];
-  transport.send('track.boundaryCurveSeg|' + a.e.toFixed(3) + ',' + a.n.toFixed(3) + ',' + b.e.toFixed(3) + ',' + b.n.toFixed(3));
+  return a.e.toFixed(3) + ',' + a.n.toFixed(3) + ',' + b.e.toFixed(3) + ',' + b.n.toFixed(3);
+}
+function boundaryMakeAB() {                // "AB" — straight line through the two fence vertices
+  if (abFlow !== 'boundaryPick' || drawPts.length < 2) return;
+  transport.send('track.boundaryAB|' + boundaryPickArg());
+  endAbFlow();                             // line created, selected and saved host-side
+}
+function boundaryMakeCurve() {             // "Curve" — arc along the boundary between A and B
+  if (abFlow !== 'boundaryPick' || drawPts.length < 2) return;
+  transport.send('track.boundaryCurveSeg|' + boundaryPickArg());
   // Curve created — stay open in a trim phase: A++/A−−/B−−/B++ walk each end along the
   // boundary (5 m per tap, host-clamped), Done closes. Mirrors old AgOpenGPS FormABDraw.
   abFlow = 'bndSegExtend'; drawPts = [];
-  endMapTap();                             // taps done — the buttons drive the rest
   showAbBar(false, false, true, true);
   document.getElementById('draw-finish').textContent = 'Done';
   hintEl.textContent = 'Extend or shorten each end, then Done'; hintEl.classList.add('show');
+}
+function boundaryCancelTouch() {           // "Cancel touch" — drop both dots, pick again (tool stays open)
+  if (abFlow !== 'boundaryPick') return;
+  drawPts = [];
+  showAbBar(false, false, false);
+  startMapTap({ hint: 'Tap point A on the boundary', onTap: boundaryCurveTap });
 }
 function drawTap(e, n) {                    // map-tap point captured (straight/curve)
   drawPts.push({ e, n });
@@ -2304,6 +2337,10 @@ document.getElementById('draw-setpoint').addEventListener('pointerdown', e => { 
 document.getElementById('draw-undo').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); hlFlow ? hlUndo() : satBnd ? satUndo() : abUndo(); });
 document.getElementById('draw-finish').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); editSession ? saveEdit() : hlFlow ? endHeadlandDraw() : satBnd ? satFinish() : abFinish(); });
 document.getElementById('draw-cancel').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); editSession ? endEdit() : hlFlow ? endHeadlandDraw() : satBnd ? satCancel() : abCancel(); });
+// Bnd. AB/Curve choice row — shown once both boundary points are picked.
+document.getElementById('draw-bnd-ab').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryMakeAB(); });
+document.getElementById('draw-bnd-curve').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryMakeCurve(); });
+document.getElementById('draw-bnd-canceltouch').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryCancelTouch(); });
 // Bnd. Curve trim row — one 5 m step per tap (repeat-tap friendly; the host clamps the ends).
 for (const [id, arg] of [['draw-exta-plus', 'A,1'], ['draw-exta-minus', 'A,-1'], ['draw-extb-minus', 'B,-1'], ['draw-extb-plus', 'B,1']])
   document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); transport.send('track.boundarySegExtend|' + arg); });
