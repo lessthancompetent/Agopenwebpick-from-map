@@ -39,6 +39,10 @@ public sealed class RemoteServerHost
     public void PlaySound(AgOpenWeb.Services.Interfaces.SoundEffect effect)
         => _ = _ws?.BroadcastAsync(WireCodec.EncodeSound((byte)effect));
 
+    /// <summary>Push a one-shot operator hint (the VM's StatusMessage) to every client.</summary>
+    public void PushHint(string text)
+        => _ = _ws?.BroadcastAsync(WireCodec.EncodeHint(text));
+
     // Satellite tile fetch (Phase MT — Draw boundary on map). Keyless Bing aerial
     // tiles via the Virtual Earth quadkey endpoint (same source as native's
     // BoundaryMapDialog). Proxied through the host so the browser draws them into the

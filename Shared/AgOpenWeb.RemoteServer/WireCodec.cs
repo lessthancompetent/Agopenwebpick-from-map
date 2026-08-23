@@ -19,7 +19,7 @@ public static class WireCodec
     public const byte Scene = 1, Tick = 2, CoverageInit = 3, CoverageCells = 4, Status = 5,
         ControlState = 6, Hello = 7, Config = 8, Profiles = 9, Wizard = 10, NtripProfiles = 11,
         FieldOps = 12, AgShare = 13, AppInfo = 14, FieldTools = 15, RecordedPath = 16, Boundary = 17,
-        Sound = 18, Pong = 19, CoverageEdge = 20, ViewPrefs = 21;
+        Sound = 18, Pong = 19, CoverageEdge = 20, ViewPrefs = 21, Hint = 22;
 
     /// <summary>One-shot alert: tells the client to play sound effect
     /// <paramref name="effectId"/> (the <c>SoundEffect</c> enum value). Pushed
@@ -30,6 +30,20 @@ public static class WireCodec
         using var w = new BinaryWriter(ms);
         w.Write(Sound);
         w.Write(effectId);
+        return ms.ToArray();
+    }
+
+    /// <summary>One-shot operator hint: the ViewModel's StatusMessage (its ONLY refusal /
+    /// feedback channel — "AutoSteer not available - no active track", "Select a boundary
+    /// first", "Cannot start playback"…) was never projected to the web, so every VM
+    /// refusal was invisible and read as "the button is broken". Pushed on change, not
+    /// per tick; the client shows it as a transient toast.</summary>
+    public static byte[] EncodeHint(string text)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write(Hint);
+        WriteStr(w, text ?? "");
         return ms.ToArray();
     }
 

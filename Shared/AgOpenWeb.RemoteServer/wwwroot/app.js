@@ -319,6 +319,9 @@ const transport = RemoteTransport.create({
   onHello(id) { myClientId = id; updateControlUi(); claimSeatIfFree(); applyMobileQualityCap(); },
   onControlState(s) { lastControl = s; updateControlUi(); claimSeatIfFree(); },
   onSound(id) { Sounds.play(id); },
+  // Host VM StatusMessage (refusals + feedback) → transient toast. This is why a refused
+  // press used to look like a dead button: the reason never left the host.
+  onHint(text) { flashHint(text, 4000); },
   // Round-trip link probe reply: token is the performance.now() we sent in diag.ping, so
   // RTT = now − token measures the pure server↔client link (one client clock, no skew).
   onPong(token) {
@@ -2230,7 +2233,12 @@ function endHeadlandDraw() {
 // when the press doesn't start on a handle.
 let editSession = null;  // { kind:'track'|'headland', index, points:[{e,n}] }
 let editDragIdx = -1;
-function flashHint(t) { const h = document.getElementById('maptap-hint'); h.textContent = t; h.classList.add('show'); setTimeout(() => h.classList.remove('show'), 1800); }
+let flashHintTimer = null;
+function flashHint(t, ms = 1800) {
+  const h = document.getElementById('maptap-hint'); h.textContent = t; h.classList.add('show');
+  if (flashHintTimer) clearTimeout(flashHintTimer);
+  flashHintTimer = setTimeout(() => h.classList.remove('show'), ms);
+}
 function startTrackEdit() {
   const active = (scene && scene.trackList || []).find(t => t.active);
   const at = scene && scene.tracks && scene.tracks[0];
@@ -2745,7 +2753,7 @@ function rhRender(d) {
         ev.stopPropagation();
         askKeypad({ title: 'Top up ' + (p.name || 'tank'), numLabel: 'Amount to ADD', units: ['L', 'kg'] }, r => {
           if (!r || !(r.value > 0)) return;
-          transport.send('rate.set|' + pi + ',tankAdd,' + r.value);
+          swbSend('rate.set|' + pi + ',tankAdd,' + r.value);
         });
       });
       tk.appendChild(lbl); tk.appendChild(add);
@@ -2860,6 +2868,10 @@ function swbGroups(d) {
   }
   return [...groups.entries()].sort((a, b) => a[0] - b[0]);
 }
+// Deliberate actuation/config sends take the seat first. Every rate.* id is Tier-2;
+// a bare transport.send from an Observer tab was dropped by the hub while the panel
+// still printed "Module config sent." / "ID N assigned." — a false success. Routing the
+// Rate Control / Module Setup / Switches sends through here makes those messages true.
 function swbSend(cmd) {
   if (!iHoldControl) transport.send('control.takeover|Browser');
   transport.send(cmd);
@@ -3163,7 +3175,7 @@ const MS_BOARD_PINS = {
   nano:   'Nano (RC12-3): sensor 0 flow 3, dir 4, PWM 5. Sensor 1 flow 2, dir 6, PWM 9. Work 15 (A1), pressure 14 (A0); relays via MCP23017. On a Nano, A0-A7 are pins 14-21.',
 };
 function msSend(key, value) {
-  transport.send('rate.modSet|' + msMod + ',' + msSen + ',' + key + ',' + value);
+  swbSend('rate.modSet|' + msMod + ',' + msSen + ',' + key + ',' + value);
   setTimeout(msRefresh, 150);
 }
 function msStatus(t) {
@@ -3192,7 +3204,7 @@ document.getElementById('ms-rlyrenum').addEventListener('pointerdown', e => {
   showConfirm('Renumber sections',
     'Give every section relay on module ' + msMod + ' a consecutive number, in relay order? ' +
     'Relays past the last section are set to none. Other relay types are left alone.',
-    () => { transport.send('rate.relayRenumber|' + msMod + ',0');
+    () => { swbSend('rate.relayRenumber|' + msMod + ',0');
             setTimeout(msRefresh, 300); msStatus('Sections renumbered.'); });
 });
 document.getElementById('ms-rlyreset').addEventListener('pointerdown', e => {
@@ -3200,7 +3212,7 @@ document.getElementById('ms-rlyreset').addEventListener('pointerdown', e => {
   showConfirm('Reset relays',
     'Put all 16 relays on module ' + msMod + ' back to driving their own section? ' +
     'Any master, bypass, tram or hydraulic assignments are lost.',
-    () => { transport.send('rate.relayReset|' + msMod);
+    () => { swbSend('rate.relayReset|' + msMod);
             setTimeout(msRefresh, 300); msStatus('Relays reset to sections.'); });
 });
 document.getElementById('ms-board').addEventListener('change', e => msSend('cfg.board', e.target.value));
@@ -3212,7 +3224,7 @@ document.getElementById('ms-addmod').addEventListener('pointerdown', e => {
   let id = 0;
   while (used.includes(id) && id < 8) id++;
   if (id > 7) { msStatus('All eight module ids already have settings.'); return; }
-  transport.send('rate.modAdd|' + id);
+  swbSend('rate.modAdd|' + id);
   msMod = id;
   setTimeout(() => { msRefresh(); msStatus('Module ' + id + ' added — load its board defaults on Commission.'); }, 300);
 });
@@ -3223,7 +3235,7 @@ document.getElementById('ms-pushsubnet').addEventListener('pointerdown', e => {
   showConfirm('Set wired subnet',
     'Module ' + msMod + ' will reboot onto ' + o.join('.') + '.' + (50 + msMod) +
     ' and leave the current wired network. Its WiFi connection is unaffected. Continue?',
-    () => { transport.send('rate.modSubnet|' + msMod + ',' + o.join(','));
+    () => { swbSend('rate.modSubnet|' + msMod + ',' + o.join(','));
             msStatus('Subnet sent — module rebooting onto ' + o.join('.') + '.' + (50 + msMod)); });
 });
 document.getElementById('ms-defaults').addEventListener('pointerdown', e => {
@@ -3236,7 +3248,7 @@ document.getElementById('ms-defaults').addEventListener('pointerdown', e => {
     'Fill module ' + msMod + "'s pins, relay map, flags and valve tuning with the factory " +
     'defaults for ' + label + '? This only fills the form — nothing is sent until you ' +
     'press a Send button.',
-    () => { transport.send('rate.modDefaults|' + msMod + ',' + board); setTimeout(msRefresh, 400);
+    () => { swbSend('rate.modDefaults|' + msMod + ',' + board); setTimeout(msRefresh, 400);
             msStatus(label + ' defaults loaded — review, then Send.'); });
 });
 // Rate control entry points on Tool config -> Machine -> Rate Control.
@@ -3296,17 +3308,17 @@ for (const b of document.querySelectorAll('#modulesetup .ms-tgl'))
 // same thing the Module tab does.
 for (const id of ['ms-pushcfg', 'ms-pushcfg2'])
   document.getElementById(id).addEventListener('pointerdown', e => {
-    e.stopPropagation(); transport.send('rate.modPush|' + msMod + ',' + msSen + ',cfg'); msStatus('Module config sent.');
+    e.stopPropagation(); swbSend('rate.modPush|' + msMod + ',' + msSen + ',cfg'); msStatus('Module config sent.');
   });
 document.getElementById('ms-pushpins').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.modPush|' + msMod + ',' + msSen + ',pins');
+  e.stopPropagation(); swbSend('rate.modPush|' + msMod + ',' + msSen + ',pins');
   msStatus('Pins sent — the module restarts if any changed.');
 });
 document.getElementById('ms-pushctl').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.modPush|' + msMod + ',' + msSen + ',ctl'); msStatus('Valve tuning sent.');
+  e.stopPropagation(); swbSend('rate.modPush|' + msMod + ',' + msSen + ',ctl'); msStatus('Valve tuning sent.');
 });
 document.getElementById('ms-pushall').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.modPush|' + msMod + ',' + msSen + ',all');
+  e.stopPropagation(); swbSend('rate.modPush|' + msMod + ',' + msSen + ',all');
   msStatus('Full setup sent to module ' + msMod + '.');
 });
 // ID assignment is unconditional at the module end: every board listening adopts
@@ -3322,7 +3334,7 @@ document.getElementById('ms-assignid').addEventListener('pointerdown', e => {
   showConfirm('Assign module ID',
     'EVERY rate module connected right now will take ID ' + msMod +
     '. Only do this with a single board connected.',
-    () => { transport.send('rate.modAssignId|' + msMod); msStatus('ID ' + msMod + ' assigned.'); });
+    () => { swbSend('rate.modAssignId|' + msMod); msStatus('ID ' + msMod + ' assigned.'); });
 });
 function rtOpen() {
   lnOpen('ratecontrol', 'ln-fieldtools', rtRender);
@@ -3345,18 +3357,18 @@ function rtRefresh() {
     rtRender();
   }).catch(() => {});
 }
-function rtSend(key, value) { transport.send('rate.set|' + rtSel + ',' + key + ',' + value); setTimeout(rtRefresh, 250); }
+function rtSend(key, value) { swbSend('rate.set|' + rtSel + ',' + key + ',' + value); setTimeout(rtRefresh, 250); }
 // Rate up/down nudges the selected channel's target, and Reset returns it to
 // the catalogue rate — the "what was it supposed to be" after a few nudges.
 // (Master moved to the on-screen switchbox; swbSend owns it.)
 document.getElementById('rt-rateup').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.bump|' + rtSel + ',5'); setTimeout(rtRefresh, 250);
+  e.stopPropagation(); swbSend('rate.bump|' + rtSel + ',5'); setTimeout(rtRefresh, 250);
 });
 document.getElementById('rt-ratedn').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.bump|' + rtSel + ',-5'); setTimeout(rtRefresh, 250);
+  e.stopPropagation(); swbSend('rate.bump|' + rtSel + ',-5'); setTimeout(rtRefresh, 250);
 });
 document.getElementById('rt-ratereset').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.rateReset|' + rtSel); setTimeout(rtRefresh, 250);
+  e.stopPropagation(); swbSend('rate.rateReset|' + rtSel); setTimeout(rtRefresh, 250);
 });
 document.getElementById('rt-hudmode').addEventListener('change', e => {
   rhSetMode(parseInt(e.target.value) || 0);
@@ -3366,14 +3378,14 @@ document.getElementById('rt-catsel').addEventListener('change', e => {
   if (!name) return;
   // Loads identity + usual rate only; the channel's meter cal and module/sensor
   // stay put, because those describe this implement, not the product.
-  transport.send('rate.assign|' + rtSel + ',' + name);
+  swbSend('rate.assign|' + rtSel + ',' + name);
   setTimeout(rtRefresh, 250);
 });
 document.getElementById('rt-catadd').addEventListener('pointerdown', e => {
   e.stopPropagation();
   const p = rtProducts[rtSel];
   if (!p || !p.name) return;
-  transport.send('rate.catAdd|' + String(p.name).replace(/[|,]/g, ' ').trim() + ',' +
+  swbSend('rate.catAdd|' + String(p.name).replace(/[|,]/g, ' ').trim() + ',' +
                  String(p.units || '').replace(/[|,]/g, ' ').trim() + ',' + (p.targetRate || 0));
   setTimeout(rtRefresh, 250);
 });
@@ -3501,7 +3513,7 @@ function rtRenderSwitches() {
       const sel = document.createElement('select'); sel.className = 'cfg-sel'; sel.dataset.sec = i;
       sel.innerHTML = '<option value="-1">none</option>' +
         Array.from({length: 8}, (_, k) => '<option value="' + k + '">S' + (k + 1) + '</option>').join('');
-      sel.addEventListener('change', () => transport.send('rate.sw|secSwitch:' + i + ',' + sel.value));
+      sel.addEventListener('change', () => swbSend('rate.sw|secSwitch:' + i + ',' + sel.value));
       cell.appendChild(lab); cell.appendChild(sel); grid.appendChild(cell);
     }
   }
@@ -3520,25 +3532,25 @@ function rtRenderSwitches() {
       d.primed.active ? 'PRIMING — ' + d.primed.remaining + 's left' : '';
   }
 }
-document.getElementById('sw-mastermode').addEventListener('change', e => transport.send('rate.sw|masterMode,' + e.target.value));
-document.getElementById('sw-type').addEventListener('change', e => transport.send('rate.sw|switchType,' + e.target.value));
+document.getElementById('sw-mastermode').addEventListener('change', e => swbSend('rate.sw|masterMode,' + e.target.value));
+document.getElementById('sw-type').addEventListener('change', e => swbSend('rate.sw|switchType,' + e.target.value));
 for (const [id, key] of [['sw-workgate','workGate'], ['sw-onscreen','onScreen'], ['sw-autorate','autoRate']])
   document.getElementById(id).addEventListener('pointerdown', e => {
     e.stopPropagation();
     const b = document.getElementById(id);
-    transport.send('rate.sw|' + key + ',' + (b.classList.contains('active') ? 0 : 1));
+    swbSend('rate.sw|' + key + ',' + (b.classList.contains('active') ? 0 : 1));
     setTimeout(rtRefresh, 250);
   });
 for (const [id, key] of [['pr-ontime','primed.onTime'], ['pr-speed','primed.speed'], ['pr-delay','primed.delay']])
-  document.getElementById(id).addEventListener('change', e => transport.send('rate.sw|' + key + ',' + e.target.value));
+  document.getElementById(id).addEventListener('change', e => swbSend('rate.sw|' + key + ',' + e.target.value));
 document.getElementById('pr-resume').addEventListener('pointerdown', e => {
   e.stopPropagation();
   const b = document.getElementById('pr-resume');
-  transport.send('rate.sw|primed.resume,' + (b.classList.contains('active') ? 0 : 1));
+  swbSend('rate.sw|primed.resume,' + (b.classList.contains('active') ? 0 : 1));
   setTimeout(rtRefresh, 250);
 });
 document.getElementById('pr-test').addEventListener('pointerdown', e => {
-  e.stopPropagation(); transport.send('rate.primed|1'); setTimeout(rtRefresh, 300);
+  e.stopPropagation(); swbSend('rate.primed|1'); setTimeout(rtRefresh, 300);
 });
 document.getElementById('rt-back').addEventListener('pointerdown', e => { e.stopPropagation(); lnOpen('fieldtools', 'ln-fieldtools'); });
 document.getElementById('rt-name').addEventListener('change', () => rtSend('name', document.getElementById('rt-name').value.replace(/[|,]/g, ' ')));
@@ -3555,15 +3567,15 @@ for (const b of document.querySelectorAll('#ratecontrol .rp-sb'))
     const p = rtProducts[rtSel]; if (!p) return;
     rtSend('manualPwm', Math.max(-255, Math.min(255, (p.manualPwm | 0) + (+b.dataset.d))));
   });
-document.getElementById('rt-resetqty').addEventListener('pointerdown', e => { e.stopPropagation(); transport.send('rate.resetQty|' + rtSel); setTimeout(rtRefresh, 250); });
-document.getElementById('rt-resetarea').addEventListener('pointerdown', e => { e.stopPropagation(); transport.send('rate.resetArea|' + rtSel); setTimeout(rtRefresh, 250); });
+document.getElementById('rt-resetqty').addEventListener('pointerdown', e => { e.stopPropagation(); swbSend('rate.resetQty|' + rtSel); setTimeout(rtRefresh, 250); });
+document.getElementById('rt-resetarea').addEventListener('pointerdown', e => { e.stopPropagation(); swbSend('rate.resetArea|' + rtSel); setTimeout(rtRefresh, 250); });
 document.getElementById('rt-units-txt').addEventListener('change', () => rtSend('units', document.getElementById('rt-units-txt').value.replace(/[|,]/g, ' ').trim()));
-document.getElementById('rt-calstart').addEventListener('pointerdown', e => { e.stopPropagation(); transport.send('rate.calStart|' + rtSel); setTimeout(rtRefresh, 250); });
-document.getElementById('rt-calstop').addEventListener('pointerdown', e => { e.stopPropagation(); transport.send('rate.calStop|' + rtSel); setTimeout(rtRefresh, 250); });
+document.getElementById('rt-calstart').addEventListener('pointerdown', e => { e.stopPropagation(); swbSend('rate.calStart|' + rtSel); setTimeout(rtRefresh, 250); });
+document.getElementById('rt-calstop').addEventListener('pointerdown', e => { e.stopPropagation(); swbSend('rate.calStop|' + rtSel); setTimeout(rtRefresh, 250); });
 document.getElementById('rt-calapply').addEventListener('pointerdown', e => {
   e.stopPropagation();
   const v = parseFloat(document.getElementById('rt-calactual').value);
-  if (Number.isFinite(v) && v > 0) { transport.send('rate.calApply|' + rtSel + ',' + v); document.getElementById('rt-calactual').value = ''; setTimeout(rtRefresh, 300); }
+  if (Number.isFinite(v) && v > 0) { swbSend('rate.calApply|' + rtSel + ',' + v); document.getElementById('rt-calactual').value = ''; setTimeout(rtRefresh, 300); }
 });
 document.getElementById('ft-obstacles').addEventListener('pointerdown', e => { e.stopPropagation(); openObstacles(); });
 document.getElementById('bm-back').addEventListener('pointerdown', e => { e.stopPropagation(); lnOpen('fieldtools', 'ln-fieldtools'); });
@@ -3651,7 +3663,7 @@ document.getElementById('fb-trk-rename').addEventListener('pointerdown', e => {
   const nameEl = row.querySelector('.fb-tname');
   const input = document.createElement('input'); input.className = 'flg-nameedit'; input.value = t.name;
   nameEl.replaceWith(input); input.focus(); input.select();
-  const commit = () => { const v = input.value.trim(); if (v && v !== t.name) transport.send('track.rename|' + t.index + ',' + v); renderFbTracks(); };
+  const commit = () => { const v = input.value.trim(); if (v && v !== t.name) swbSend('track.rename|' + t.index + ',' + v); renderFbTracks(); };
   input.addEventListener('keydown', ev => { ev.stopPropagation(); if (ev.key === 'Enter') commit(); else if (ev.key === 'Escape') renderFbTracks(); });
   input.addEventListener('blur', commit);
 });
@@ -4293,7 +4305,7 @@ function renderNioRc(rc, mods) {
     grid.dataset.html = html;
     const cb = document.getElementById('nio-sb-exp');
     if (cb) cb.addEventListener('change', () => {
-      transport.send('rate.sw|expectPhysical,' + (cb.checked ? 1 : 0));
+      swbSend('rate.sw|expectPhysical,' + (cb.checked ? 1 : 0));
       setTimeout(nioRcTick, 400);
     });
   }

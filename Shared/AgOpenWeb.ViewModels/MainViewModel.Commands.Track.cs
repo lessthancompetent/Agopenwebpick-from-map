@@ -328,17 +328,7 @@ public partial class MainViewModel
             ShowConfirmationDialog(
                 "Delete All Tracks",
                 $"Delete all {SavedTracks.Count} tracks? This cannot be undone.",
-                () =>
-                {
-                    SavedTracks.Clear();
-                    SelectedTrack = null;
-                    RebuildRecordedPathsAndContours(); // clear rec-path/contour display
-                    SaveTracksToFile();
-                    // Also remove RecPath.txt, else the recorded path reloads on next open.
-                    if (_fieldService.ActiveField is { } f)
-                        Services.RecPathFileService.DeleteRecFile(f.DirectoryPath, "RecPath.txt");
-                    StatusMessage = "All tracks deleted";
-                });
+                DeleteAllTracksRemote);
         });
 
         SwapABPointsCommand = new RelayCommand(() =>
@@ -1801,5 +1791,25 @@ public partial class MainViewModel
 
         _intents.RequestGuidanceNudge(distanceMeters);
         StatusMessage = $"Nudged {(distanceMeters > 0 ? "right" : "left")} {Math.Abs(distanceMeters * 100):F1}cm";
+    }
+
+    /// <summary>
+    /// Delete every saved track (the confirmed action). The WEB path calls this directly:
+    /// the browser already asks its own confirm() before sending track.deleteAll, and the
+    /// native ShowConfirmationDialog it used to map to is host-side only — the web can
+    /// never answer it, so nothing was deleted AND State.UI.ActiveDialog stayed parked on
+    /// Confirmation, which made HandleHotkey bail until restart.
+    /// </summary>
+    public void DeleteAllTracksRemote()
+    {
+        if (SavedTracks.Count == 0) { StatusMessage = "No tracks to delete"; return; }
+        SavedTracks.Clear();
+        SelectedTrack = null;
+        RebuildRecordedPathsAndContours(); // clear rec-path/contour display
+        SaveTracksToFile();
+        // Also remove RecPath.txt, else the recorded path reloads on next open.
+        if (_fieldService.ActiveField is { } f)
+            Services.RecPathFileService.DeleteRecFile(f.DirectoryPath, "RecPath.txt");
+        StatusMessage = "All tracks deleted";
     }
 }

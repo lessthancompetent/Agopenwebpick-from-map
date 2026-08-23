@@ -68,4 +68,24 @@ public class RoutePlanClearTests
         Assert.That(vm.SavedTracks, Does.Contain(userAb));
         Assert.That(vm.SavedTracks.Any(t => t.Name.StartsWith("Route ")), Is.False);
     }
+
+    // The web's track.deleteAll used to map to DeleteAllTracksCommand, which opens a
+    // host-side confirmation the browser can never answer: nothing was deleted and the
+    // UI stayed parked on the Confirmation dialog. The web now calls the confirmed
+    // action directly.
+    [Test]
+    public void DeleteAllTracksRemote_ClearsTracks_WithoutADialog()
+    {
+        var vm = new MainViewModelBuilder().Build();
+        var ab = Ab("AB 1", 0);
+        vm.SavedTracks.Add(ab);
+        vm.SavedTracks.Add(Ab("AB 2", 1));
+        vm.SelectedTrack = ab;
+
+        vm.DeleteAllTracksRemote();
+
+        Assert.That(vm.SavedTracks, Is.Empty, "every saved track is deleted");
+        Assert.That(vm.SelectedTrack, Is.Null, "the active track is deactivated");
+        Assert.That(vm.StatusMessage, Is.EqualTo("All tracks deleted"));
+    }
 }

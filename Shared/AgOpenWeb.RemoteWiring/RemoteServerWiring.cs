@@ -44,6 +44,23 @@ public static partial class RemoteServerWiring
         if (services.GetService<IAudioService>() is AgOpenWeb.Services.Audio.WebClientAudioService audio)
             audio.EffectTriggered += effect => server.PlaySound(effect);
 
+        // StatusMessage → the web. It is the VM's only refusal/feedback channel and was never
+        // projected, so "AutoSteer not available - no active track", "Select a boundary first",
+        // "No headland defined" etc. were invisible on the tablet — every refused press looked
+        // like a dead button. Push on change only (the module-hello timer rewrites it at 10 Hz
+        // with the same text; the equality check keeps that quiet).
+        {
+            string lastHint = vm.StatusMessage ?? "";
+            vm.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName != nameof(AgOpenWeb.ViewModels.MainViewModel.StatusMessage)) return;
+                var now = vm.StatusMessage ?? "";
+                if (now.Length == 0 || now == lastHint) return;
+                lastHint = now;
+                server.PushHint(now);
+            };
+        }
+
         // Was the App instance field _remoteWizardActive; now a captured local
         // shared by the command-handler and wizard-projector closures below.
         bool wizardActive = false;
@@ -482,6 +499,7 @@ public static partial class RemoteServerWiring
                                         vm.RenameTrackAt(rti, arg[(ri + 1)..]);
                                     return;
                                 }
+                                case "track.deleteAll": vm.DeleteAllTracksRemote(); return;
                                 case "track.deleteAt": // Field Builder — delete row by index.
                                 {
                                     if (int.TryParse(arg, out var tDelIdx)) vm.DeleteTrackAt(tDelIdx);
@@ -944,7 +962,8 @@ public static partial class RemoteServerWiring
                                 "track.aPlus" => vm.StartAPlusLineCommand,
                                 "track.boundaryCurve" => vm.CreateCurveFromBoundaryCommand,
                                 "track.allEdges" => vm.CreateTracksFromAllEdgesCommand,
-                                "track.deleteAll" => vm.DeleteAllTracksCommand, // Field Builder
+                                // track.deleteAll is routed to DeleteAllTracksRemote() in the arg switch
+                                // (the browser already confirmed; the native dialog is unanswerable here).
                                 // Quick-AB selector (GPS-driven): drive A→B, record a curve
                                 // by driving, and set-point-at-vehicle (param ignored in
                                 // DriveAB/Curve modes → uses live GPS).

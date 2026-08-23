@@ -123,7 +123,15 @@ public sealed class WebSocketHub
         _authority.RefreshIfHolder(conn);
 
         if (IsRestrictedCommand is { } restricted && restricted(id) && !_authority.HoldsFresh(conn))
-            return; // Tier-2 without fresh authority → dropped
+        {
+            // Tier-2 without fresh authority → dropped. Tell THAT client why: a bare
+            // return left the operator staring at a button that "did nothing" (the AUTO
+            // master, headland toggles, every rate.* send) with no trace anywhere. The
+            // nack rides the HINT frame so the client shows it as the usual toast.
+            if (_clients.TryGetValue(conn, out var sender))
+                _ = SendToAsync(sender, WireCodec.EncodeHint("Not in control — tap the role badge to take control (" + id + ")"), CancellationToken.None);
+            return;
+        }
 
         CommandHandler?.Invoke(id, arg);
     }
