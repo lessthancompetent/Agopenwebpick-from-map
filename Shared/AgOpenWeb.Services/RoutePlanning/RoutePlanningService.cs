@@ -2021,6 +2021,38 @@ public sealed class RoutePlanningService : IRoutePlanningService
     /// rotated to begin at the vertex nearest <paramref name="startPos"/> so the
     /// drive-to-start lands at a natural entry point.
     /// </summary>
+    /// <inheritdoc />
+    public List<Vec3>? BuildLapRing(IReadOnlyList<Vec2> boundary, double insetMeters, double cornerRadius, Vec3? startPos = null)
+    {
+        // Same pipeline as a headland lap (BuildHeadlandRings, i = 0) with an explicit
+        // inset instead of (i + 0.5)·width: inset → anchor seam at the machine → round
+        // corners to the turn radius → close → headings.
+        var poly = boundary as List<Vec2> ?? new List<Vec2>(boundary);
+        if (poly.Count < 3) return null;
+        // Positive inset = inward (the outer fence); negative = OUTWARD (an obstacle ring
+        // offset away from its hole). |inset| < 5 cm uses the ring as-is.
+        var ring = insetMeters > 0.05 ? _offset.CreateInwardOffset(poly, insetMeters)
+                 : insetMeters < -0.05 ? _offset.CreateOutwardOffset(poly, -insetMeters)
+                 : new List<Vec2>(poly);
+        if (ring is not { Count: >= 3 }) return null;
+
+        var pts = new List<Vec2>(ring);
+        if (startPos.HasValue)
+            RotateToNearest(pts, new Vec2(startPos.Value.Easting, startPos.Value.Northing));
+        pts = RoundCorners(pts, cornerRadius);
+        if (pts.Count < 3) return null;
+
+        var loop = new List<Vec3>(pts.Count + 1);
+        for (int j = 0; j < pts.Count; j++)
+        {
+            var a = pts[j];
+            var b = pts[(j + 1) % pts.Count];
+            loop.Add(new Vec3(a.Easting, a.Northing, Math.Atan2(b.Easting - a.Easting, b.Northing - a.Northing)));
+        }
+        loop.Add(loop[0]);   // close the lap
+        return loop;
+    }
+
     private List<List<Vec3>> BuildHeadlandRings(
         IReadOnlyList<Vec2> boundary, double width, int passes, Vec3? startPos, double turnRadius = 0,
         double insetBias = 0, int skipOuter = 0)

@@ -18,6 +18,16 @@ namespace AgOpenWeb.Services.RoutePlanning;
 /// </summary>
 public interface IRoutePlanningService
 {
+    /// <summary>
+    /// One DRIVABLE closed lap ring: the boundary inset by <paramref name="insetMeters"/>
+    /// with every corner rounded to <paramref name="cornerRadius"/> (a sharp offset
+    /// corner isn't drivable), closed back to its start, with travel headings. This is
+    /// exactly the ring the route planner drives as a headland lap, exposed so the
+    /// Field Builder's whole-ring "Boundary Curve" is the SAME line. Null when the inset
+    /// collapses the ring (tool wider than the field allows there).
+    /// </summary>
+    List<Vec3>? BuildLapRing(IReadOnlyList<Vec2> boundary, double insetMeters, double cornerRadius, Vec3? startPos = null);
+
     /// <summary>How the headland laps are emitted (classic laps, one continuous
     /// spiral in/out, or none). Operator's choice — set before Generate*.</summary>
     RouteHeadlandStyle HeadlandStyle { get; set; }
