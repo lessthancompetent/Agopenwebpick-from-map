@@ -459,6 +459,10 @@ public class AutoSteerService : IAutoSteerService
     {
         _isEngaged = false;
         _state.IsAutoSteerEngaged = false;
+        // Don't leave the last commanded angle on the wire: PGN 254 keeps broadcasting
+        // after disengage (status 0 — the board ignores the angle, but a stale value is
+        // still a stale value if anything else reads it).
+        _state.SteerAngle = 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════════

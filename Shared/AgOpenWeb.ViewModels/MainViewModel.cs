@@ -2284,6 +2284,20 @@ public partial class MainViewModel : ObservableObject
             SetProperty(ref _selectedTrack, value);
             if (!ReferenceEquals(oldValue, value))
             {
+                // SAFETY: never keep steering while the guidance line is swapped or removed
+                // underneath the tractor. Every creator / picker / delete / cycle path ends up
+                // here, so this is the one place that guarantees it (AgOpenGPS disengages on
+                // any track change). Mirrors the manual toggle's disengage exactly.
+                if (IsAutoSteerEngaged)
+                {
+                    IsAutoSteerEngaged = false;
+                    _autoSteerService.Disengage();
+                    _audioService.Play(Services.Interfaces.SoundEffect.AutoSteerOff);
+                    StatusMessage = value == null
+                        ? "Guidance stopped — track removed"
+                        : "Guidance stopped — track changed";
+                }
+
                 // Sync IsActive state with selection
                 if (oldValue != null)
                 {
