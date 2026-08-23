@@ -46,19 +46,34 @@ public sealed class ControlAuthority
             return _holder == conn && (Environment.TickCount64 - _lastPresenceTicks) <= DeadmanMs;
     }
 
-    /// <summary>Take control. Granted if free or already held by this connection;
-    /// denied if another connection holds it (first-come, single authority).</summary>
+    /// <summary>Take control. Granted if free, already held by this connection, or held
+    /// by a connection whose presence has lapsed the deadman (a stale hold is no hold);
+    /// denied only if another FRESH connection holds it (first-come, single authority).</summary>
     public bool Acquire(Guid conn, string name)
     {
         ControlStateDto? snap = null;
+        bool revokedStale = false;
         lock (_lock)
         {
-            if (_holder.HasValue && _holder != conn) return false;
+            if (_holder.HasValue && _holder != conn)
+            {
+                // A holder that has stopped heart-beating has no valid claim. Refusing a
+                // fresh claimant on its behalf left a reconnecting kiosk (after a deploy
+                // restart / link drop) stuck as Observer until the periodic sweep ran —
+                // every AUTO press silently dropped with nothing in the log.
+                bool stale = (Environment.TickCount64 - _lastPresenceTicks) > DeadmanMs;
+                if (!stale) return false;
+                revokedStale = true;
+            }
             _holder = conn;
             _holderName = string.IsNullOrWhiteSpace(name) ? "Remote" : name.Trim();
             _lastPresenceTicks = Environment.TickCount64;
             snap = new ControlStateDto(true, _holder.ToString()!, _holderName);
         }
+        // Like Takeover: the seat never goes empty (handed straight to the new claimant),
+        // so do NOT raise Revoked — that runs the host failsafe and would disengage the
+        // steering the new operator just took. The dead holder is simply superseded.
+        _ = revokedStale;
         Changed?.Invoke(snap);
         return true;
     }
