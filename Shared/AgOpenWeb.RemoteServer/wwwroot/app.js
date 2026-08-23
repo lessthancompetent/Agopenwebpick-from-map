@@ -2522,8 +2522,9 @@ document.getElementById('rp-plotab').addEventListener('pointerdown', e => {
 });
 document.getElementById('rp-plantrack').addEventListener('pointerdown', e => {
   e.stopPropagation();
+  // Pattern rides along too: the track fixes the heading, Skip/Block still set the row order.
   transport.send('route.planTrack|' + [rpHeadland, rpSkip, rpBlock,
-    rpHlStyle, rpHlFirst ? 1 : 0, rpBackCut ? 1 : 0].join(','));
+    rpHlStyle, rpHlFirst ? 1 : 0, rpBackCut ? 1 : 0, rpPattern].join(','));
   document.getElementById('rp-stats').textContent = 'Planning along selected track…';
   let tries = 0;
   const poll = () => {

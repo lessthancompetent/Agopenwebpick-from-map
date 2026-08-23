@@ -791,7 +791,8 @@ public partial class MainViewModel
     /// are bypassed — the track IS the reference.
     /// </summary>
     public void PlanRouteAlongSelectedTrack(int headlandPasses, int skipCount, int blockSkip,
-        int headlandStyle = 0, bool headlandFirst = true, bool headlandBackCut = false)
+        int headlandStyle = 0, bool headlandFirst = true, bool headlandBackCut = false,
+        int pattern = 0)
     {
         var track = SelectedTrack;
         if (track?.Points is not { Count: >= 2 } tp)
@@ -807,19 +808,27 @@ public partial class MainViewModel
         if (tp.Count == 2)
         {
             double hdg = Math.Atan2(tp[1].Easting - tp[0].Easting, tp[1].Northing - tp[0].Northing);
-            PlanRoute(0, headlandPasses, skipCount, blockSkip, 0, false, headingOverrideRad: hdg,
+            PlanRoute(TrackPattern(pattern), headlandPasses, skipCount, blockSkip, 0, false, headingOverrideRad: hdg,
                 headlandStyle: headlandStyle, headlandFirst: headlandFirst, headlandBackCut: headlandBackCut);
             if (_currentRoutePlan != null)
                 StatusMessage = $"Route aligned to '{track.Name}' — " + StatusMessage;
         }
         else
         {
-            PlanRoute(0, headlandPasses, skipCount, blockSkip, 0, false, refCurve: tp,
+            PlanRoute(TrackPattern(pattern), headlandPasses, skipCount, blockSkip, 0, false, refCurve: tp,
                 headlandStyle: headlandStyle, headlandFirst: headlandFirst, headlandBackCut: headlandBackCut);
             if (_currentRoutePlan != null)
                 StatusMessage = $"Route follows curve '{track.Name}' — " + StatusMessage;
         }
     }
+
+    /// <summary>
+    /// Pattern to use when planning ALONG a reference track. The track fixes the
+    /// heading, so the row-ORDER patterns (Skip, Block) still apply and are honoured;
+    /// Spiral and Cross have no single heading to follow and fall back to plain Auto.
+    /// Previously this path hard-coded Auto, silently discarding the panel's choice.
+    /// </summary>
+    internal static int TrackPattern(int pattern) => pattern is 1 or 4 ? pattern : 0;
 
     /// <summary>
     /// Two map taps → a real AB line track, added to the field's tracks and

@@ -334,7 +334,7 @@ public static partial class RemoteServerWiring
                                             .ResetArea(rar);
                                     return;
                                 }
-                                case "route.planTrack": // "headlandPasses,skip,block[,hlStyle,hlFirst,backCut]" — align to the SELECTED track
+                                case "route.planTrack": // "headlandPasses,skip,block[,hlStyle,hlFirst,backCut,pattern]" — align to the SELECTED track
                                 {
                                     var pt2 = arg.Split(',');
                                     var iN2 = System.Globalization.NumberStyles.Integer;
@@ -344,10 +344,12 @@ public static partial class RemoteServerWiring
                                         && int.TryParse(pt2[2], iN2, inv, out var tblk))
                                     {
                                         int tsty = pt2.Length >= 4 && int.TryParse(pt2[3], iN2, inv, out var s3) ? s3 : 0;
+                                        int tpat = pt2.Length >= 7 && int.TryParse(pt2[6], iN2, inv, out var s6) ? s6 : 0;
                                         vm.PlanRouteAlongSelectedTrack(thl, tskip, tblk,
                                             headlandStyle: tsty,
                                             headlandFirst: pt2.Length < 5 || pt2[4] != "0",
-                                            headlandBackCut: pt2.Length >= 6 && pt2[5] == "1");
+                                            headlandBackCut: pt2.Length >= 6 && pt2[5] == "1",
+                                            pattern: tpat);
                                     }
                                     return;
                                 }
