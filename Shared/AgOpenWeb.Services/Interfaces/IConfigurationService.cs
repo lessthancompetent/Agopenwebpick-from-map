@@ -34,6 +34,12 @@ public interface IConfigurationService
     ConfigurationStore Store { get; }
 
     /// <summary>
+    /// Persist flagged changes automatically (debounced). Without this only the explicit
+    /// "Send + Save" wrote profiles, so web edits were lost on every restart.
+    /// </summary>
+    void EnableAutoSave();
+
+    /// <summary>
     /// Gets the directory where vehicle profiles are stored
     /// </summary>
     string ProfilesDirectory { get; }

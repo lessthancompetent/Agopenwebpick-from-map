@@ -55,6 +55,11 @@ public sealed class WebBackend
         // status timers on the host loop).
         var vm = sp.GetRequiredService<MainViewModel>();
 
+        // Profiles are loaded by now: from here on, any flagged edit (steer settings,
+        // Zero WAS, tool/vehicle fields) persists itself after a 2 s debounce instead of
+        // waiting for the explicit "Send + Save" the web UI never surfaces.
+        configService.EnableAutoSave();
+
         // Start the embedded browser server, then wire its command handler + projectors.
         var server = new AgOpenWeb.RemoteServer.RemoteServerHost();
         await server.StartAsync(

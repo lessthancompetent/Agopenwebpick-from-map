@@ -38,6 +38,54 @@ public class ConfigurationService(
 {
     public ConfigurationStore Store => configStore;
 
+    // Debounced auto-save. Every steer/vehicle/tool edit only calls Store.MarkChanged()
+    // (a flag) and pushes to the module; the ONLY thing that wrote the profile to disk
+    // was the explicit "Send + Save" button — a native-panel habit the web UI never
+    // surfaces. Any app restart (deploy, crash, power) silently discarded every edit
+    // since the last explicit save ("settings in tractor setup don't persist"). Now a
+    // flagged change persists the active profiles 2 s after the last edit.
+    private const int AutoSaveDebounceMs = 2000;
+    private System.Threading.Timer? _autoSaveTimer;
+    private bool _autoSaveHooked;
+    private readonly object _autoSaveLock = new();
+
+    /// <summary>Start persisting flagged changes automatically (idempotent).</summary>
+    public void EnableAutoSave()
+    {
+        lock (_autoSaveLock)
+        {
+            if (_autoSaveHooked) return;
+            _autoSaveHooked = true;
+            configStore.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName != nameof(ConfigurationStore.HasUnsavedChanges) || !configStore.HasUnsavedChanges)
+                    return;
+                lock (_autoSaveLock)
+                {
+                    _autoSaveTimer ??= new System.Threading.Timer(_ => AutoSaveTick(), null,
+                        System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+                    _autoSaveTimer.Change(AutoSaveDebounceMs, System.Threading.Timeout.Infinite);
+                }
+            };
+        }
+    }
+
+    private void AutoSaveTick()
+    {
+        try
+        {
+            if (!configStore.HasUnsavedChanges) return;
+            var v = configStore.ActiveVehicleProfileName;
+            var t = configStore.ActiveToolProfileName;
+            if (string.IsNullOrWhiteSpace(v) || string.IsNullOrWhiteSpace(t)) return;
+            SaveProfiles(v, t);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Config] auto-save failed: {ex.Message}");
+        }
+    }
+
     public string ProfilesDirectory => profileService.VehiclesDirectory;
     public string ToolsDirectory => toolProfileService.ToolsDirectory;
 
