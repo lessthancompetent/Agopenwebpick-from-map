@@ -45,9 +45,8 @@ public class StateShadowGuardTests
         ["_lastMirroredBaseTrack"] = "VM-LOCAL: dedup cache for last track pushed to the map",
         ["_lastMirroredNextTrack"] = "VM-LOCAL: dedup cache for last track pushed to the map",
         ["_selectedTrack"] = "VM-LOCAL: sole home for track selection (FieldState.SelectedTrack deleted §12.2)",
-        ["_bndSegTrack"] = "VM-LOCAL: last boundary-segment curve (reference INTO SavedTracks, not a copy) for the A/B extend buttons",
-        ["_bndSegPrevSelected"] = "VM-LOCAL: selection to restore when the Bnd. Curve trim phase is cancelled (reference INTO SavedTracks, not a copy)",
-        ["_bndSegRing"] = "VM-LOCAL: boundary-ring snapshot the segment was cut from; the extend buttons walk it",
+        ["_bndSegTrack"] = "VM-LOCAL: the boundary AB/curve the two-tap tool just built (reference INTO SavedTracks, not a copy) so Cancel can discard it",
+        ["_bndSegPrevSelected"] = "VM-LOCAL: selection to restore when the Bnd. AB/Curve tails phase is cancelled (reference INTO SavedTracks, not a copy)",
         ["_simulatorLocalPlane"] = "VM-LOCAL: input-stage bootstrap plane for the sim's WGS84->local conversion (reviewed clean §12.4: uses field origin when present, reset on field/coord change)",
 
         // No domain shadows remain — the field-geometry cluster (incl. _activeField)

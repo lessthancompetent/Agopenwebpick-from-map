@@ -688,28 +688,21 @@ public static partial class RemoteServerWiring
                                         vm.RemoteCreateBoundaryAB(baE, baN, bbE, bbN);
                                     return;
                                 }
-                                case "track.boundarySegExtend": // A++/A−−/B++/B−− after a Bnd. Curve:
-                                {                               // arg = "A,1"|"A,-1"|"B,1"|"B,-1". Tier-1.
-                                    var bs = arg.Split(',');
-                                    if (bs.Length == 2 && int.TryParse(bs[1], out var bsd))
-                                        vm.RemoteBoundarySegExtend(bs[0], bsd);
-                                    return;
-                                }
-                                case "track.boundarySegCancel": // Cancel in the Bnd. Curve trim phase:
-                                    vm.RemoteBoundarySegCancel(); // discard the new curve, restore the
+                                case "track.boundarySegCancel": // Cancel in the Bnd. AB/Curve tails phase:
+                                    vm.RemoteBoundarySegCancel(); // discard the new line, restore the
                                     return;                       // previous selection. Tier-1.
-                                case "track.extendEnd": // AOG A++/B++ (FormABDraw.cs:845-876): straight
-                                {                       // run-out on the SELECTED curve. arg = "A|B[,metres]"
-                                    var xe = arg.Split(','); // (default 49). Tier-2: mutates the guidance line.
-                                    string xEnd = xe.Length >= 1 ? xe[0].Trim() : "";
-                                    bool xIsA = string.Equals(xEnd, "A", System.StringComparison.OrdinalIgnoreCase);
-                                    bool xIsB = string.Equals(xEnd, "B", System.StringComparison.OrdinalIgnoreCase);
-                                    if (!xIsA && !xIsB) return;
-                                    double xm = 49;
-                                    if (xe.Length >= 2 && double.TryParse(xe[1], num, inv, out var xmv)
-                                        && !double.IsNaN(xmv) && !double.IsInfinity(xmv) && xmv > 0)
-                                        xm = xmv;
-                                    vm.RemoteExtendTrackEnd(xIsA, xm);
+                                case "track.tail": // A++ / A−− / B++ / B−− on the SELECTED boundary AB/curve:
+                                {                  // change ONLY the straight tail past the fixed anchor.
+                                    var tl = arg.Split(','); // arg = "A|B[,deltaMetres]" (default +TrackTails.StepMeters).
+                                    string tEnd = tl.Length >= 1 ? tl[0].Trim() : ""; // Tier-2: mutates the guidance line.
+                                    bool tIsA = string.Equals(tEnd, "A", System.StringComparison.OrdinalIgnoreCase);
+                                    bool tIsB = string.Equals(tEnd, "B", System.StringComparison.OrdinalIgnoreCase);
+                                    if (!tIsA && !tIsB) return;
+                                    double td = AgOpenWeb.Models.Track.TrackTails.StepMeters;
+                                    if (tl.Length >= 2 && double.TryParse(tl[1], num, inv, out var tdv)
+                                        && !double.IsNaN(tdv) && !double.IsInfinity(tdv) && tdv != 0)
+                                        td = Math.Clamp(tdv, -999, 999);
+                                    vm.RemoteAdjustTail(tIsA, td);
                                     return;
                                 }
                                 case "flag.placeAt": // Phase MT map-tap. arg = "easting,northing"

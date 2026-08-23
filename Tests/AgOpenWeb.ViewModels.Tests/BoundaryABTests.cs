@@ -7,16 +7,15 @@ namespace AgOpenWeb.ViewModels.Tests;
 
 /// <summary>
 /// "Bnd. AB" two-tap straight line: RemoteCreateBoundaryAB. Mirrors AgOpenGPS 6.8.6
-/// FormABDraw.BtnMakeABLine_Click — tap A snaps to the nearest fence vertex of ANY ring, tap B
-/// to the nearest vertex of that same ring, the index-ordering rule decides which vertex is A,
-/// heading = atan2(B − A). Placement: the line is shifted (w−o)/2 toward the field interior so
-/// pass 0 puts the tool EDGE on the fence (AOG's swath-edge convention, CABLine.cs:118/140-142),
-/// then extended past the boundary like every other AB creator.
-/// P1.1: the snap runs on the DENSE pick ring (FixSpacing, 1.1 m here), so a tap 3 m diagonally
-/// INSIDE a corner now lands on the nearest side vertex (3 m away) rather than the corner (4.2 m)
-/// — exactly what AOG's dense fenceLine does. The regression taps therefore sit just OUTSIDE the
-/// corners (on the diagonal), where the corner vertex is unambiguously the nearest; the results
-/// are unchanged from the sparse-ring version because densifying only adds points.
+/// FormABDraw.BtnMakeABLine_Click — tap A snaps to the closest point on the closest EDGE of ANY
+/// ring, tap B to the closest edge point of that same ring, the index-ordering rule decides
+/// which point is A, heading = atan2(B − A). Placement: the line is shifted (w−o)/2 toward the
+/// field interior so pass 0 puts the tool EDGE on the fence (AOG's swath-edge convention,
+/// CABLine.cs:118/140-142); the shifted points are the FIXED anchors, and the persisted 2-point
+/// line is the anchors pushed out by the tails (fence crossing + 20 m, capped 99 m).
+/// The regression taps sit just OUTSIDE the corners (on the diagonal), where the edge projection
+/// clamps to the corner itself, so the results match the vertex-snapped version. Mid-side taps
+/// (the edge-snap case proper) are covered in BoundaryTailTests.
 /// </summary>
 [TestFixture]
 public class BoundaryABTests
@@ -83,6 +82,13 @@ public class BoundaryABTests
         // Extended past the fence: A (east end, from P2) beyond E=100+20, B (west end) before E=0−20.
         Assert.That(track.Points[0].Easting, Is.GreaterThanOrEqualTo(100 + 20 - 1e-6));
         Assert.That(track.Points[1].Easting, Is.LessThanOrEqualTo(0 - 20 + 1e-6));
+        // Anchors = the shifted fence points themselves; the tips are the anchors ± the tails.
+        Assert.That(track.HasAnchors, Is.True);
+        Assert.That(track.AnchorA!.Value.Easting, Is.EqualTo(100).Within(1e-9));
+        Assert.That(track.AnchorB!.Value.Easting, Is.EqualTo(0).Within(1e-9));
+        Assert.That(track.AnchorA!.Value.Northing, Is.EqualTo(lineN).Within(1e-6));
+        Assert.That(track.Points[0].Easting, Is.EqualTo(100 + track.TailA).Within(1e-9));
+        Assert.That(track.Points[1].Easting, Is.EqualTo(0 - track.TailB).Within(1e-9));
     }
 
     // Same two vertices tapped in the opposite order give the SAME line: the index-ordering

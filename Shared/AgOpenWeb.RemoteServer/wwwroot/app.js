@@ -1952,7 +1952,7 @@ document.getElementById('bn-abmenu').addEventListener('pointerdown', e => { e.st
 // creation flow (any of the four) that the bottom toolbar + hint follow.
 let drawMode = null;     // 'straight' | 'curve' (map-tap modes only) — drives the preview
 let drawPts = [];        // [{e,n}] captured so far — preview only (host holds the real list)
-let abFlow = null;       // 'straight' | 'curve' | 'driveAB' | 'recordCurve' | 'boundaryPick' | 'bndSegExtend' | null
+let abFlow = null;       // 'straight' | 'curve' | 'driveAB' | 'recordCurve' | 'boundaryPick' | 'bndTails' | null
 let driveStep = 0;       // Drive-AB / record-curve step: 0 → next press sets A/Start, 1 → sets B/End
 let curveMarks = [];     // client-side path dots dropped while driving a record-curve (Set Start→End)
 let _lastCurveMark = null;
@@ -2007,9 +2007,9 @@ function renderAbDotLabels() {
     span.style.display = 'block';
   }
 }
-// Configure the bottom toolbar buttons for the active flow. ext = the A/B ±fence
-// boundary-curve trim row (the curve already exists: Done keeps it, Cancel discards it and
-// restores the previous selection — track.boundarySegCancel).
+// Configure the bottom toolbar buttons for the active flow. ext = the A++/A−−/B−−/B++ tails
+// row after a Bnd. AB / Curve is built (the line already exists: Done keeps it, Cancel
+// discards it and restores the previous selection — track.boundarySegCancel).
 // bnd = the AB / Curve / Cancel touch choice row shown once two boundary points are picked
 // (AOG FormABDraw's btnMakeABLine / btnMakeCurve / btnCancelTouch); Cancel stays = leave the tool.
 function showAbBar(setPoint, undo, finish, ext, bnd) {
@@ -2045,73 +2045,38 @@ function startRecordCurve() {              // GPS: record by driving — Set Sta
 }
 // "Bnd. AB/Curve" — tap point A then point B on the boundary, THEN choose what to make
 // (mirrors AgOpenGPS FormABDraw: the second tap is a selection, not a commit). "AB" sends
-// track.boundaryAB (straight line through the two snapped fence vertices), "Curve" sends
+// track.boundaryAB (straight line through the two snapped points), "Curve" sends
 // track.boundaryCurveSeg (the host walks the shorter arc between them), "Cancel touch"
-// clears the two dots and stays in the tool (btnCancelTouch). Points snap to the nearest
-// boundary vertex for display; the host re-snaps authoritatively.
+// clears the two dots and stays in the tool (btnCancelTouch). Points snap to the closest
+// point on the closest boundary EDGE for display; the host re-snaps authoritatively.
 // Ring-aware snap, mirroring the host (and AOG FormABDraw.cs:625-661): tap A searches
 // EVERY ring (outer + inners); tap B searches only the ring A landed on, so the preview
-// dots show exactly the vertices the host will use. onlyRing = index into scene.boundaries.
-// The host snaps on a DENSE pick ring (P1.1: AOG CFenceLine.FixFenceLine density — 1.1 m
-// under 20 ha / 2.2 m under 40 ha / 3.3 m, halved for inner rings), not the sparse vertices
-// the scene carries, so the same densification is replicated here (densePickRings) before
-// searching; otherwise a tap 30 m along a straight side would preview at the corner while
-// the host lands it on the side. Known residual mismatch: for the CURVE the host snaps on
-// the boundary inset by w/2 + U/2 (not the fence), so the dots sit on the fence a few metres
-// outside the curve's real A/B — pre-existing, and the inset is out of scope here.
+// dots show exactly the points the host will use. onlyRing = index into scene.boundaries.
+// Edge snap: every edge (p, q) of the ring, the tap projected onto it with t clamped to
+// [0, 1], the closest projection wins — so a tap 3 m off the middle of a 100 m side lands ON
+// that side, never on a corner (the sparse scene ring gives the same point as the host's
+// dense ring: densifying only adds collinear vertices). Known residual mismatch: for the
+// CURVE the host snaps on the boundary inset by w/2 + U/2 (not the fence), so the dots sit
+// on the fence a few metres outside the curve's real A/B — pre-existing, and the inset is
+// out of scope here.
 function nearestBoundaryPt(e, n, onlyRing) {
   let best = null, bd = Infinity, bestRing = -1;
-  const bs = densePickRings();
+  const bs = scene && scene.boundaries;
   if (bs) for (let r = 0; r < bs.length; r++) {
     if (onlyRing != null && r !== onlyRing) continue;
-    for (const p of bs[r]) {
-      const dx = p.e - e, dy = p.n - n, d = dx * dx + dy * dy;
-      if (d < bd) { bd = d; best = p; bestRing = r; }
+    const ring = bs[r]; const cnt = ring ? ring.length : 0;
+    if (!cnt) continue;
+    for (let i = 0; i < cnt; i++) {
+      const p = ring[i], q = ring[(i + 1) % cnt];
+      const ex = q.e - p.e, ey = q.n - p.n, len2 = ex * ex + ey * ey;
+      let t = len2 < 1e-12 ? 0 : ((e - p.e) * ex + (n - p.n) * ey) / len2;
+      if (t < 0) t = 0; else if (t > 1) t = 1;
+      const pe = p.e + ex * t, pn = p.n + ey * t;
+      const dx = pe - e, dy = pn - n, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = { e: pe, n: pn }; bestRing = r; }
     }
   }
   return best ? { e: best.e, n: best.n, ring: bestRing } : { e, n, ring: -1 };
-}
-// Dense pick rings, cached per scene.boundaries instance (a new Scene brings a new array;
-// the same array means the rings haven't changed, so the cache is reused).
-let _densePickSrc = null, _densePickRings = null;
-function densePickRings() {
-  const bs = scene && scene.boundaries;
-  if (!bs) return null;
-  if (bs !== _densePickSrc) {
-    _densePickSrc = bs;
-    _densePickRings = bs.map((ring, r) => densifyPickRing(ring, r));
-  }
-  return _densePickRings;
-}
-// Exact port of the host's FenceLineService.FixSpacing (= AOG CFenceLine.FixFenceLine,
-// CFenceLine.cs:48-114) minus headings: spacing from the ring's OWN shoelace area (as AOG
-// uses each fence's area), two midpoint-insertion passes at 1.5× then 1.6× spacing that
-// wrap around the closing segment (inserting at index 0 when it is the last→first gap, as
-// the original does), then a thinning pass that drops points closer than 0.9× spacing.
-// Same insertion order and rescans as the host, so the vertex set matches bit-for-bit
-// (floating-point midpoints of identical inputs). Rings under 3 points pass through.
-function densifyPickRing(ring, ringIndex) {
-  if (!ring || ring.length < 3) return ring;
-  const area = shoelace(ring);
-  let spacing = area < 200000 ? 1.1 : area < 400000 ? 2.2 : 3.3;
-  if (ringIndex > 0) spacing *= 0.5;
-  const pts = ring.map(p => ({ e: p.e, n: p.n }));
-  const dist = (a, b) => Math.sqrt((a.e - b.e) * (a.e - b.e) + (a.n - b.n) * (a.n - b.n));
-  for (const k of [1.5, 1.6]) {
-    const max = spacing * k;
-    for (let i = 0; i < pts.length; i++) {
-      let j = i + 1; if (j === pts.length) j = 0;
-      if (dist(pts[i], pts[j]) > max) {
-        pts.splice(j, 0, { e: (pts[i].e + pts[j].e) / 2, n: (pts[i].n + pts[j].n) / 2 });
-        i--;
-      }
-    }
-  }
-  const min = spacing * 0.9;
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (dist(pts[i], pts[i + 1]) < min) { pts.splice(i + 1, 1); i--; }
-  }
-  return pts;
 }
 function startBoundaryCurve() {
   abFlow = 'boundaryPick'; drawPts = [];
@@ -2131,21 +2096,26 @@ function boundaryPickArg() {
   const a = drawPts[0], b = drawPts[1];
   return a.e.toFixed(3) + ',' + a.n.toFixed(3) + ',' + b.e.toFixed(3) + ',' + b.n.toFixed(3);
 }
-function boundaryMakeAB() {                // "AB" — straight line through the two fence vertices
+function boundaryMakeAB() {                // "AB" — straight line through the two snapped points
   if (abFlow !== 'boundaryPick' || drawPts.length < 2) return;
   transport.send('track.boundaryAB|' + boundaryPickArg());
-  endAbFlow();                             // line created, selected and saved host-side
+  startBoundaryTails('AB line');           // line created, selected and saved host-side
 }
 function boundaryMakeCurve() {             // "Curve" — arc along the boundary between A and B
   if (abFlow !== 'boundaryPick' || drawPts.length < 2) return;
   transport.send('track.boundaryCurveSeg|' + boundaryPickArg());
-  // Curve created — stay open in a trim phase: A/B ±fence walk each end along the boundary
-  // (5 m per tap, host-clamped; our feature, not AOG's straight A++/B++). Done keeps the
-  // curve (client-only — it was committed at creation); Cancel discards it host-side.
-  abFlow = 'bndSegExtend'; drawPts = [];
+  startBoundaryTails('curve');
+}
+// Line created — stay open in the TAILS phase (both products): A++/A−−/B−−/B++ lengthen or
+// shorten ONLY the straight run-out past the fixed anchors A and B (TAIL_STEP_M per tap,
+// host-clamped at 0 = the line ends at the anchor). Done keeps the line (client-only — it was
+// committed at creation); Cancel discards it host-side and restores the previous selection.
+function startBoundaryTails(what) {
+  abFlow = 'bndTails'; drawPts = [];
   showAbBar(false, false, true, true);
   document.getElementById('draw-finish').textContent = 'Done';
-  hintEl.textContent = 'Trim each end along the fence, then Done (Cancel discards the curve)'; hintEl.classList.add('show');
+  hintEl.textContent = 'A++/A−− and B++/B−− set how far the ' + what + ' runs past A and B, then Done (Cancel discards it)';
+  hintEl.classList.add('show');
 }
 function boundaryCancelTouch() {           // "Cancel touch" — drop both dots, pick again (tool stays open)
   if (abFlow !== 'boundaryPick') return;
@@ -2199,18 +2169,18 @@ function abUndo() {
 function abFinish() {
   if (abFlow === 'curve') transport.send('track.drawFinish');
   else if (abFlow === 'recordCurve') transport.send('track.finishCurve');
-  else if (abFlow === 'bndSegExtend') { endAbFlow(); return; } // Done — curve already committed
+  else if (abFlow === 'bndTails') { endAbFlow(); return; } // Done — line already committed
   else return;
   endAbFlow();
 }
 function abCancel() {
   if (!abFlow) return;
-  if (abFlow === 'bndSegExtend') { transport.send('track.boundarySegCancel'); endAbFlow(); return; } // discard the new curve, restore the previous selection
+  if (abFlow === 'bndTails') { transport.send('track.boundarySegCancel'); endAbFlow(); return; } // discard the new line, restore the previous selection
   transport.send('track.drawCancel'); // CancelABCreationCommand — universal (all modes)
   endAbFlow();
 }
 function endAbFlow() {
-  if (abFlow === 'bndSegExtend') document.getElementById('draw-finish').textContent = 'Finish';
+  if (abFlow === 'bndTails') document.getElementById('draw-finish').textContent = 'Finish';
   abFlow = null; drawMode = null; drawPts = []; driveStep = 0;
   curveMarks = []; _lastCurveMark = null; // clear record-curve path dots
   drawBar.classList.remove('show');
@@ -2392,11 +2362,20 @@ document.getElementById('draw-cancel').addEventListener('pointerdown', e => { e.
 document.getElementById('draw-bnd-ab').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryMakeAB(); });
 document.getElementById('draw-bnd-curve').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryMakeCurve(); });
 document.getElementById('draw-bnd-canceltouch').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); boundaryCancelTouch(); });
-// Bnd. Curve trim row (A/B ±fence) — one 5 m step ALONG THE BOUNDARY per tap (repeat-tap
-// friendly; the host clamps the ends). Not AOG's A++/B++ — those are the straight run-out in
-// the Tracks manager (track.extendEnd).
-for (const [id, arg] of [['draw-exta-plus', 'A,1'], ['draw-exta-minus', 'A,-1'], ['draw-extb-minus', 'B,-1'], ['draw-extb-plus', 'B,1']])
-  document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); transport.send('track.boundarySegExtend|' + arg); });
+// A++ / A−− / B−− / B++ — the operator's tail buttons: one TAIL_STEP_M step per tap on the
+// straight line PAST the fixed anchor (track.tail|A|B,±m; the host clamps at 0 and, when the
+// tail is already 0, ignores a further "−−"). The anchors and the body never move. Tier-2:
+// the line is the active guidance line, so only the seat holder can change it.
+const TAIL_STEP_M = 5;   // operator: 5 m per press (mirrors TrackTails.StepMeters)
+function sendTail(end, sign) {
+  if (!iHoldControl) { flashHint('Observer — tap the role badge (top) to take control'); return; }
+  transport.send('track.tail|' + end + ',' + (sign * TAIL_STEP_M));
+}
+// Same four buttons in the draw toolbar (tails phase right after a Bnd. AB/Curve is built) and
+// in the Tracks manager toolbar (when the selected track has anchors).
+for (const [id, end, sign] of [['draw-exta-plus', 'A', 1], ['draw-exta-minus', 'A', -1], ['draw-extb-minus', 'B', -1], ['draw-extb-plus', 'B', 1],
+                               ['trk-taila-plus', 'A', 1], ['trk-taila-minus', 'A', -1], ['trk-tailb-minus', 'B', -1], ['trk-tailb-plus', 'B', 1]])
+  document.getElementById(id).addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); sendTail(end, sign); });
 // Touch cancel for bare map-tap flows (flag). stopPropagation so the pill isn't taken as a map tap.
 document.getElementById('maptap-cancel').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (mapTap && mapTap.onCancel) mapTap.onCancel(); else endMapTap(); });
 
@@ -2433,15 +2412,15 @@ function openTracksManager() { renderTracksList(); openDialog('dlg-tracks'); }
 function renderTracksList() {
   // Dim the guidance-affecting actions when we're not the operator. Delete/swap/activate
   // change the active line; import, visibility and rec-path display are data → ungated.
-  for (const id of ['trk-delete', 'trk-swap', 'trk-activate', 'trk-exta', 'trk-extb'])
+  for (const id of ['trk-delete', 'trk-swap', 'trk-activate', 'trk-taila-plus', 'trk-taila-minus', 'trk-tailb-minus', 'trk-tailb-plus'])
     document.getElementById(id).classList.toggle('disabled', !iHoldControl);
   const list = document.getElementById('trk-list');
   const tl = (scene && scene.trackList) || [];
-  // A+49 m / B+49 m (AOG A++/B++) act on the SELECTED track and only make sense on a curve
-  // (AOG FormABDraw greys them unless mode == Curve): show them only when the active row is
-  // a Curve. The host re-checks (AB line / closed track refused with a status message).
-  const selCurve = tl.some(t => t.active && t.type === 'Curve');
-  for (const id of ['trk-exta', 'trk-extb']) document.getElementById(id).hidden = !selCurve;
+  // A++/A−−/B−−/B++ act on the SELECTED track and only exist for a boundary AB/curve with
+  // fixed anchors (t.anchors): show them only when the active row has them. The host
+  // re-checks ("Select a boundary AB or curve").
+  const selAnchors = tl.some(t => t.active && t.anchors);
+  for (const id of ['trk-taila-plus', 'trk-taila-minus', 'trk-tailb-minus', 'trk-tailb-plus']) document.getElementById(id).hidden = !selAnchors;
   if (!tl.length) { list.innerHTML = '<div class="trk-empty">No tracks in this field</div>'; return; }
   list.innerHTML = '';
   for (const t of tl) {
@@ -2470,9 +2449,6 @@ function renderTracksList() {
 }
 document.getElementById('trk-delete').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (iHoldControl) transport.send('track.delete'); });
 document.getElementById('trk-swap').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (iHoldControl) transport.send('track.swapAB'); });
-// AOG A++ / B++: straight 49 m run-out from the selected curve's end (track.extendEnd|A|B,metres).
-document.getElementById('trk-exta').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (iHoldControl) transport.send('track.extendEnd|A,49'); });
-document.getElementById('trk-extb').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (iHoldControl) transport.send('track.extendEnd|B,49'); });
 document.getElementById('trk-activate').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (iHoldControl) transport.send('track.activate'); });
 document.getElementById('trk-recpaths').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); transport.send('track.toggleRecPaths'); });
 document.getElementById('trk-import').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); closeDialog(); lnOpen('importtracks'); });

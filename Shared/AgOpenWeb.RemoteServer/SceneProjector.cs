@@ -149,7 +149,7 @@ public sealed class SceneProjector
         // Tracks-manager list: ALL tracks (incl. hidden), index = position in the field
         // track list so the client can address one for select/visibility/management.
         var trackList = f.Tracks.ToArray()
-            .Select((t, i) => new TrackInfoDto(i, t.Name, TrackTypeLabel(t), t.IsActive, t.IsVisible))
+            .Select((t, i) => new TrackInfoDto(i, t.Name, TrackTypeLabel(t), t.IsActive, t.IsVisible, t.HasAnchors))
             .ToList();
 
         // Field Builder Headland-tab list — VM-held, supplied by the host provider.

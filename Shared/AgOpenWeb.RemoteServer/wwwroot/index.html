@@ -1030,10 +1030,10 @@
       background: rgba(var(--ov),0.04); cursor: pointer; display: flex; align-items: center; justify-content: center; }
     .trk-tool img { width: 26px; height: 26px; object-fit: contain; }
     .trk-tool.disabled { opacity: 0.4; pointer-events: none; }
-    /* Text tools (A+49 m / B+49 m): AOG colours — A end orange, B end blue. */
+    /* Text tools (A++ / A−− / B−− / B++ tails): AOG colours — A end orange, B end blue. */
     .trk-tool.trk-ext { width: auto; padding: 0 9px; white-space: nowrap;
       font: 700 12px system-ui, sans-serif; }
-    #trk-exta { color: #f0a24a; } #trk-extb { color: #5fb0f5; }
+    #trk-taila-plus, #trk-taila-minus { color: #f0a24a; } #trk-tailb-plus, #trk-tailb-minus { color: #5fb0f5; }
     .trk-tool.trk-ext[hidden] { display: none; }
     .trk-sep { width: 1px; height: 28px; background: var(--border); margin: 0 4px; }
     .trk-head { display: grid; grid-template-columns: 1fr 90px 60px; padding: 6px 10px;
@@ -1343,20 +1343,21 @@
        Undo/Finish appear only in curve mode; Cancel always. The .draw-bnd row appears once
        two boundary points are picked (Bnd. AB/Curve): make an AB line or a Curve through
        them, or Cancel touch to pick again (AOG FormABDraw). The .draw-ext row appears
-       only after a Bnd. Curve is created: walk each end ALONG THE FENCE, 5 m/tap — our own
-       trim, deliberately NOT labelled A++/B++ because AgOpenGPS's A++/B++ are a straight 49 m
-       run-out (those live in the Tracks manager as "A+49 m / B+49 m"). Cancel discards the
-       new curve and restores the previous selection; Done keeps it. -->
+       after a Bnd. AB or Curve is created (the tails phase): A++ / A−− / B−− / B++ lengthen or
+       shorten ONLY the straight line past the fixed anchors A and B, 5 m per tap (the anchors
+       and the boundary body between them never move). The same four buttons sit in the Tracks
+       manager for a selected boundary AB/curve. Cancel discards the new line and restores the
+       previous selection; Done keeps it. -->
   <div id="draw-toolbar">
     <button id="draw-setpoint">Set Point</button>
     <button id="draw-undo">Undo</button>
     <button class="draw-bnd" id="draw-bnd-ab" title="Straight AB line through the two picked boundary points">AB</button>
-    <button class="draw-bnd" id="draw-bnd-curve" title="Curve along the boundary between the two picked points; then trim each end along the fence">Curve</button>
+    <button class="draw-bnd" id="draw-bnd-curve" title="Curve along the boundary between the two picked points; then set how far it runs past A and B">Curve</button>
     <button class="draw-bnd" id="draw-bnd-canceltouch" title="Clear the two picked points and pick again">Cancel touch</button>
-    <button class="draw-ext" id="draw-exta-plus" title="Follow the boundary 5 m further at the A end">A +fence</button>
-    <button class="draw-ext" id="draw-exta-minus" title="Follow the boundary 5 m less at the A end">A −fence</button>
-    <button class="draw-ext" id="draw-extb-minus" title="Follow the boundary 5 m less at the B end">B −fence</button>
-    <button class="draw-ext" id="draw-extb-plus" title="Follow the boundary 5 m further at the B end">B +fence</button>
+    <button class="draw-ext" id="draw-exta-plus" title="Lengthen the line past point A by 5 m">A++</button>
+    <button class="draw-ext" id="draw-exta-minus" title="Shorten the line past point A by 5 m">A−−</button>
+    <button class="draw-ext" id="draw-extb-minus" title="Shorten the line past point B by 5 m">B−−</button>
+    <button class="draw-ext" id="draw-extb-plus" title="Lengthen the line past point B by 5 m">B++</button>
     <button id="draw-finish">Finish</button>
     <button id="draw-cancel">Cancel</button>
   </div>
@@ -3625,11 +3626,14 @@
       <div class="trk-toolbar">
         <button class="trk-tool" id="trk-delete" data-t2 title="Delete selected track"><img src="/icons/Trash.png" alt="Delete"></button>
         <button class="trk-tool" id="trk-swap" data-t2 title="Swap A and B points"><img src="/icons/ABSwapPoints.png" alt="Swap"></button>
-        <!-- AgOpenGPS A++ / B++ (FormABDraw btnALength/btnBLength): straight 49 m run-out
-             from each end of the SELECTED curve along its end heading. Curves only — hidden
-             for an AB line (already infinite) and a closed track, as AOG greys them. -->
-        <button class="trk-tool trk-ext" id="trk-exta" data-t2 title="Extend the A end 49 m straight along its heading (AgOpenGPS A++)">A+49 m</button>
-        <button class="trk-tool trk-ext" id="trk-extb" data-t2 title="Extend the B end 49 m straight along its heading (AgOpenGPS B++)">B+49 m</button>
+        <!-- A++ / A−− / B−− / B++ (track.tail): lengthen/shorten ONLY the straight line past
+             the fixed anchors of the SELECTED boundary AB/curve, 5 m per tap. Shown only when
+             the active track has anchors (scene.trackList[].anchors); other tracks have no
+             anchors to run past. -->
+        <button class="trk-tool trk-ext" id="trk-taila-plus" data-t2 title="Lengthen the line past point A by 5 m">A++</button>
+        <button class="trk-tool trk-ext" id="trk-taila-minus" data-t2 title="Shorten the line past point A by 5 m">A−−</button>
+        <button class="trk-tool trk-ext" id="trk-tailb-minus" data-t2 title="Shorten the line past point B by 5 m">B−−</button>
+        <button class="trk-tool trk-ext" id="trk-tailb-plus" data-t2 title="Lengthen the line past point B by 5 m">B++</button>
         <button class="trk-tool" id="trk-activate" data-t2 title="Activate selected track"><img src="/icons/TrackOn.png" alt="Activate"></button>
         <span class="trk-sep"></span>
         <button class="trk-tool" id="trk-import" title="Import tracks from another field"><img src="/icons/FileOpen.png" alt="Import"></button>

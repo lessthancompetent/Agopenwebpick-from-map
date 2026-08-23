@@ -13,7 +13,9 @@ public record TrackDto(string Id, string Name, int Type, IReadOnlyList<Vec2Dto> 
 /// name, a display type label (Line/Curve/Path/Contour — derived host-side like native's
 /// TracksDialog), and the active/visible flags. Carries NO points (the manager only
 /// lists/selects); the render geometry rides SceneDto.Tracks.</summary>
-public record TrackInfoDto(int Index, string Name, string Type, bool Active, bool Visible);
+/// <summary>One row in the Tracks manager. <c>Anchors</c> = boundary-derived track with fixed
+/// anchors + adjustable tails (Track.HasAnchors), so the client can show A++/A−−/B++/B−−.</summary>
+public record TrackInfoDto(int Index, string Name, string Type, bool Active, bool Visible, bool Anchors = false);
 
 /// <summary>One row in the Field Builder Headland tab: index into the VM's HeadlandSegments
 /// list, name, a type label (Line/Curve/Boundary), the inward offset (m), and Effective

@@ -24,6 +24,13 @@ public partial class MainViewModel
     {
         if (index < 0 || index >= SavedTracks.Count || pts.Count < 2) return;
         var track = SavedTracks[index];
+        if (track.HasAnchors)
+        {
+            // Drag-editing points would move the fixed anchors / rewrite the fixed body.
+            // The only editable things on a boundary line are its tails (A++/A−−/B++/B−−).
+            StatusMessage = "Boundary line: A and B are fixed — use A++/A−−/B++/B−− to change the ends";
+            return;
+        }
 
         var newPts = new List<Vec3>(pts.Count);
         if (pts.Count == 2)

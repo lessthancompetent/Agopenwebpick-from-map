@@ -5,14 +5,16 @@ using AgOpenWeb.Models.Track;
 namespace AgOpenWeb.ViewModels.Tests;
 
 /// <summary>
-/// Boundary-segment curve ("Bnd. Curve" two-tap) creation + the A++/A−−/B++/B−− extend
-/// buttons: RemoteCreateBoundaryCurveSegment / RemoteBoundarySegExtend. Uses a circular
-/// boundary so the on-boundary arc portion of the track is identifiable by radius (the
-/// past-fence tangent extensions leave the circle), making the ±5 m growth measurable.
+/// Boundary-segment curve ("Bnd. Curve" two-tap) creation + the A++/A−−/B++/B−− tail buttons:
+/// RemoteCreateBoundaryCurveSegment / RemoteAdjustTail. Uses a circular boundary so the
+/// on-boundary arc portion of the track (the fixed BODY between the anchors) is identifiable
+/// by radius — the straight tangent tails leave the circle — which makes "the body never
+/// changes, only the tails do" directly measurable.
 /// P1.1/P1.3: the ring is first normalised by FixSpacing (1.1 m rule → the 0.87 m circle is
-/// thinned to 1.745 m), the walk is fence-winding and half-open, the body is midpoint-densified
-/// to ≤ 1.6 m, and the track is named "Cu {deg}°" (AOG FormABDraw.cs:505) instead of the old
-/// fixed "Boundary Curve" — hence the name assertions below check the AOG pattern.
+/// thinned to 1.745 m), the walk is fence-winding from anchor A to anchor B, the body is
+/// midpoint-densified to ≤ 1.6 m, and the track is named "Cu {deg}°" (AOG FormABDraw.cs:505)
+/// instead of the old fixed "Boundary Curve" — hence the name assertions below check the AOG
+/// pattern.
 /// </summary>
 [TestFixture]
 public class BoundaryCurveSegmentTests
@@ -76,69 +78,88 @@ public class BoundaryCurveSegmentTests
         Assert.That(ArcBandLength(track.Points), Is.EqualTo(Math.PI * Radius / 2).Within(12.0));
     }
 
+    // A++ / B++ grow ONLY the straight tail past the anchor: the on-circle body length is
+    // unchanged, the point count grows by exactly 10 (1 m tail points), the anchors stay put.
     [Test]
-    public void Extend_GrowsSameTrackByAboutFiveMeters()
+    public void TailPlus_GrowsOnlyTheTail_BodyUnchanged()
     {
         var vm = BuildVmWithCircleBoundary();
         vm.RemoteCreateBoundaryCurveSegment(0, Radius, Radius, 0);
         var track = vm.SavedTracks[0];
         string name = track.Name;
-        double before = ArcBandLength(track.Points);
+        double bodyBefore = ArcBandLength(track.Body!);
+        int countBefore = track.Points.Count;
+        var anchorA = track.AnchorA!.Value;
+        var anchorB = track.AnchorB!.Value;
 
-        vm.RemoteBoundarySegExtend("A", 1);
+        vm.RemoteAdjustTail(isA: true, deltaMeters: 10);
 
-        // Same track, same name — rebuilt in place, ~5 m longer along the boundary
-        // (walks whole ring vertices, so a step lands just under the 5 m budget).
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1));
         Assert.That(vm.SavedTracks[0], Is.SameAs(track));
-        Assert.That(track.Name, Is.EqualTo(name));
-        Assert.That(ArcBandLength(track.Points) - before, Is.EqualTo(5.0).Within(2.0));
+        Assert.That(track.Name, Is.EqualTo(name), "name is not recomputed on a tail change (AOG's A++/B++ don't either)");
+        Assert.That(track.Points, Has.Count.EqualTo(countBefore + 10));
+        Assert.That(ArcBandLength(track.Body!), Is.EqualTo(bodyBefore).Within(1e-9), "the body is untouched");
+        Assert.That(track.AnchorA!.Value, Is.EqualTo(anchorA));
+        Assert.That(track.AnchorB!.Value, Is.EqualTo(anchorB));
+        // The anchors are still track points, and the tail tip is tailA metres straight behind A.
+        Assert.That(track.Points.Any(p => Math.Abs(p.Easting - anchorA.Easting) < 1e-9 && Math.Abs(p.Northing - anchorA.Northing) < 1e-9), Is.True);
+        double tipDist = Math.Sqrt(Math.Pow(track.Points[0].Easting - anchorA.Easting, 2) + Math.Pow(track.Points[0].Northing - anchorA.Northing, 2));
+        Assert.That(tipDist, Is.EqualTo(track.TailA).Within(1e-9));
 
-        double afterA = ArcBandLength(track.Points);
-        vm.RemoteBoundarySegExtend("B", 1);
-        Assert.That(ArcBandLength(track.Points) - afterA, Is.EqualTo(5.0).Within(2.0));
+        vm.RemoteAdjustTail(isA: false, deltaMeters: 10);
+        Assert.That(track.Points, Has.Count.EqualTo(countBefore + 20));
+        Assert.That(ArcBandLength(track.Body!), Is.EqualTo(bodyBefore).Within(1e-9));
     }
 
+    // A−− / B−− shrink the tail, clamp at 0 (the line then ends exactly at the anchor) and are a
+    // quiet no-op once there: no rebuild, just a status.
     [Test]
-    public void Shorten_ClampsAtMinimumCurveLength()
+    public void TailMinus_ClampsAtTheAnchor_ThenIsANoOp()
     {
         var vm = BuildVmWithCircleBoundary();
-        // ~9.6 m arc from the top of the circle.
-        vm.RemoteCreateBoundaryCurveSegment(0, Radius, Radius * Math.Sin(0.2), Radius * Math.Cos(0.2));
+        vm.RemoteCreateBoundaryCurveSegment(0, Radius, Radius, 0);
         var track = vm.SavedTracks[0];
+        double bodyBefore = ArcBandLength(track.Body!);
+        var anchorB = track.AnchorB!.Value;
 
-        vm.RemoteBoundarySegExtend("B", -1); // ~9.6 → ~5.2 m
-        vm.RemoteBoundarySegExtend("B", -1); // ~5.2 → ~2.6 m (budget-clamped above 2 m)
-        var pointsAtMin = track.Points;
+        for (int i = 0; i < 20 && track.TailB > 0; i++) vm.RemoteAdjustTail(isA: false, deltaMeters: -10);
 
-        vm.RemoteBoundarySegExtend("B", -1); // would drop below ~2 m → refused
+        Assert.That(track.TailB, Is.EqualTo(0));
+        Assert.That(vm.StatusMessage, Is.EqualTo("B end now at point B"));
+        Assert.That(track.Points[^1].Easting, Is.EqualTo(anchorB.Easting).Within(1e-9));
+        Assert.That(track.Points[^1].Northing, Is.EqualTo(anchorB.Northing).Within(1e-9));
+        Assert.That(ArcBandLength(track.Body!), Is.EqualTo(bodyBefore).Within(1e-9), "shortening never eats the body");
+        var pointsAtZero = track.Points;
 
-        Assert.That(track.Points, Is.SameAs(pointsAtMin), "clamped step must not rebuild the track");
-        Assert.That(vm.StatusMessage, Is.EqualTo("Boundary curve at minimum length"));
-        Assert.That(ArcBandLength(track.Points), Is.GreaterThan(1.5));
+        vm.RemoteAdjustTail(isA: false, deltaMeters: -10);
+
+        Assert.That(track.Points, Is.SameAs(pointsAtZero), "no rebuild at zero tail");
+        Assert.That(vm.StatusMessage, Is.EqualTo("B end already at point B"));
+        Assert.That(track.TailB, Is.EqualTo(0));
     }
 
     [Test]
-    public void Extend_IsNoOpWhenTrackWasDeleted()
+    public void Tail_IsRefusedWhenTheTrackWasDeleted()
     {
         var vm = BuildVmWithCircleBoundary();
         vm.RemoteCreateBoundaryCurveSegment(0, Radius, Radius, 0);
         vm.SavedTracks.Clear(); // track deleted (or another field opened — same reload path)
+        vm.SelectedTrack = null;
 
-        vm.RemoteBoundarySegExtend("A", 1);
+        vm.RemoteAdjustTail(isA: true, deltaMeters: 10);
 
         Assert.That(vm.SavedTracks, Is.Empty);
-        Assert.That(vm.StatusMessage, Does.StartWith("Create a boundary curve first"));
+        Assert.That(vm.StatusMessage, Is.EqualTo("Select a boundary AB or curve"));
     }
 
     [Test]
-    public void Extend_IsNoOpBeforeAnyCurveExists()
+    public void Tail_IsRefusedBeforeAnyBoundaryLineExists()
     {
         var vm = BuildVmWithCircleBoundary();
 
-        vm.RemoteBoundarySegExtend("B", 1);
+        vm.RemoteAdjustTail(isA: false, deltaMeters: 10);
 
         Assert.That(vm.SavedTracks, Is.Empty);
-        Assert.That(vm.StatusMessage, Does.StartWith("Create a boundary curve first"));
+        Assert.That(vm.StatusMessage, Is.EqualTo("Select a boundary AB or curve"));
     }
 }

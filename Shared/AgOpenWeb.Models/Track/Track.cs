@@ -98,6 +98,37 @@ public class Track : INotifyPropertyChanged
     public bool NoPassOffset { get; set; }
 
     /// <summary>
+    /// Boundary-derived tracks ("Bnd. AB" / "Bnd. Curve"): the two FIXED anchors the
+    /// operator placed on the fence. Once placed they never move — A++/A−−/B++/B−− only
+    /// change <see cref="TailA"/>/<see cref="TailB"/>, the straight run-out PAST each anchor.
+    /// Null on every other track (drawn, driven, imported, AOG-made).
+    /// </summary>
+    public Vec3? AnchorA { get; set; }
+
+    /// <summary>See <see cref="AnchorA"/>.</summary>
+    public Vec3? AnchorB { get; set; }
+
+    /// <summary>Metres of straight line protruding past anchor A (behind it along the body's
+    /// start heading). 0 = the line starts exactly at A. Never negative.</summary>
+    public double TailA { get; set; }
+
+    /// <summary>Metres of straight line protruding past anchor B (ahead of it along the body's
+    /// end heading). 0 = the line ends exactly at B. Never negative.</summary>
+    public double TailB { get; set; }
+
+    /// <summary>
+    /// The fixed body between the anchors: first point == <see cref="AnchorA"/>, last ==
+    /// <see cref="AnchorB"/>, headings included. <see cref="Points"/> is always
+    /// <c>TrackTails.BuildWithTails(Body, TailA, TailB)</c>; the body itself is never edited.
+    /// Null when <see cref="HasAnchors"/> is false.
+    /// </summary>
+    public List<Vec3>? Body { get; set; }
+
+    /// <summary>True for a boundary-derived track whose ends are fixed anchors with
+    /// adjustable tails (both anchors and the body are present).</summary>
+    public bool HasAnchors => AnchorA.HasValue && AnchorB.HasValue && Body != null && Body.Count >= 2;
+
+    /// <summary>
     /// Whether this track is currently active for guidance.
     /// </summary>
     private bool _isActive;

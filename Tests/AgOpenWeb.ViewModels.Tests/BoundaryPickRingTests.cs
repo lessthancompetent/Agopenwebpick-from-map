@@ -9,10 +9,13 @@ namespace AgOpenWeb.ViewModels.Tests;
 /// P1.1 dense pick ring + P1.3 segment-curve geometry of the two-tap "Bnd. Curve"
 /// (RemoteCreateBoundaryCurveSegment), mirroring AgOpenGPS 6.8.6 FormABDraw.BtnMakeCurve_Click
 /// (FormABDraw.cs:424-529) on top of a CFenceLine.FixFenceLine-dense fence (CFenceLine.cs:48-114):
-///  - taps snap on the DENSE ring (1.1 m under 20 ha, halved for inner rings), so two taps on one
-///    straight side of a 4-vertex square land on two different vertices and make a curve;
-///  - the curve follows the shorter arc by vertex count, walked in FENCE WINDING regardless of
-///    tap order, half-open, wrapping through index 0 when the taps straddle the seam;
+///  - taps snap to the closest point on the closest EDGE and are spliced into the DENSE ring
+///    (1.1 m under 20 ha, halved for inner rings) as exact vertices, so two taps on one straight
+///    side of a 4-vertex square become two exact anchors and the dense side vertices between
+///    them make the curve body;
+///  - the body follows the shorter arc by vertex count, walked in FENCE WINDING regardless of
+///    tap order, from anchor A to anchor B inclusive, wrapping through index 0 when the taps
+///    straddle the seam;
 ///  - midpoint densification to ≤ 1.6 m with NO smoothing (corners stay exactly where they are);
 ///  - central-difference headings, "Cu {deg}°" name from the circular-mean heading.
 /// The builder's mocked IPolygonOffsetService returns null from CreateInwardOffset, so the VM
@@ -60,11 +63,12 @@ public class BoundaryPickRingTests
 
     private static bool OnSquareLeftSide(Vec3 p) => Math.Abs(p.Easting) < 1e-9 && p.Northing >= -1e-9 && p.Northing <= 100 + 1e-9;
 
-    // (a) Two taps 30 m apart on the SAME straight side of the sparse square. On the raw 4-vertex
-    // ring both would snap to P0 or P1 ("Pick two different points"); on the dense ring they land
-    // on two different side vertices and a curve is built — lying exactly on the side (no smoothing).
+    // (a) Two taps 30 m apart on the SAME straight side of the sparse square. With vertex snapping
+    // on the raw 4-vertex ring both would snap to P0 or P1 ("Pick two different points"); the edge
+    // snap lands them ON the side at exactly N = 30 and N = 60 (neither is a dense vertex), and
+    // the dense side vertices between them make the body — lying exactly on the side (no smoothing).
     [Test]
-    public void SameStraightSide_TwoTaps_SnapToDifferentDenseVertices_AndMakeACurve()
+    public void SameStraightSide_TwoTaps_SnapOntoTheEdge_AndMakeACurve()
     {
         var vm = BuildSquareVm();
 
@@ -78,12 +82,24 @@ public class BoundaryPickRingTests
         Assert.That(vm.SelectedTrack, Is.SameAs(track));
         Assert.That(vm.StatusMessage, Does.StartWith("Created Cu "));
 
-        // Snapped vertices: N = 30 → dense index 19 (29.6875 m), N = 60 → index 38 (59.375 m);
-        // half-open walk 19..37 → body from 29.6875 to 57.8125 m, every point exactly on E = 0.
-        var body = track.Points.Where(p => OnSquareLeftSide(p) && p.Northing > 29 && p.Northing < 59).ToList();
-        Assert.That(body, Has.Count.EqualTo(19));
-        Assert.That(body[0].Northing, Is.EqualTo(19 * DenseStep).Within(1e-9));
-        Assert.That(body[^1].Northing, Is.EqualTo(37 * DenseStep).Within(1e-9));
+        // Anchors: (0, 30) and (0, 60) exactly; body = A, dense vertices 20..38 (31.25 … 59.375 m),
+        // B → 21 points, every one exactly on E = 0.
+        Assert.That(track.HasAnchors, Is.True);
+        Assert.That(track.AnchorA!.Value.Northing, Is.EqualTo(30).Within(1e-9));
+        Assert.That(track.AnchorB!.Value.Northing, Is.EqualTo(60).Within(1e-9));
+        var body = track.Body!;
+        Assert.That(body, Has.Count.EqualTo(21));
+        Assert.That(body[0].Northing, Is.EqualTo(30).Within(1e-9));
+        Assert.That(body[1].Northing, Is.EqualTo(20 * DenseStep).Within(1e-9));
+        Assert.That(body[^2].Northing, Is.EqualTo(38 * DenseStep).Within(1e-9));
+        Assert.That(body[^1].Northing, Is.EqualTo(60).Within(1e-9));
+        Assert.That(body.All(OnSquareLeftSide), Is.True);
+        // Tails: A south to the bottom side (30 + 20 → 50 m), B north to the top (40 + 20 → 60 m).
+        Assert.That(track.TailA, Is.EqualTo(50));
+        Assert.That(track.TailB, Is.EqualTo(60));
+        Assert.That(track.Points, Has.Count.EqualTo(50 + 21 + 60));
+        Assert.That(track.Points[0].Northing, Is.EqualTo(30 - 50).Within(1e-9));
+        Assert.That(track.Points[^1].Northing, Is.EqualTo(60 + 60).Within(1e-9));
         // Every track point lies on the side's line E = 0 (tails included — they run along it).
         Assert.That(track.Points.All(p => Math.Abs(p.Easting) < 1e-9), Is.True, "no smoothing / no lateral shift");
         // (e) name: "Cu " + circular-mean heading, general number format + degree sign. Walking
@@ -119,9 +135,10 @@ public class BoundaryPickRingTests
     }
 
     // (c) Taps straddling index 0 (P0 at the seam): A on the left side 10 m up, B on the bottom
-    // side 10 m along. |start − end| = |6 − 250| > n/2 → the short arc crosses the seam and is
-    // walked 250..255, 0..5 (bottom side → corner P0 → left side): 12 vertices, not the 244-vertex
-    // complement. The corner (0,0) is in the body exactly (no corner cutting).
+    // side 10 m along. The snaps (0,10) and (10,0) are spliced in at indices 7 and 251 of the
+    // 258-vertex ring; |7 − 251| > n/2 → the short arc crosses the seam and is walked 251..257,
+    // 0..7 (bottom side → corner P0 → left side): 15 vertices, not the ~245-vertex complement.
+    // The corner (0,0) is in the body exactly (no corner cutting); the anchors are the body's ends.
     [Test]
     public void TapsStraddlingTheSeam_WalkTheShortArcThroughIndexZero()
     {
@@ -130,7 +147,8 @@ public class BoundaryPickRingTests
         vm.RemoteCreateBoundaryCurveSegment(1, 10, 10, 1);
 
         Assert.That(vm.SavedTracks, Has.Count.EqualTo(1), vm.StatusMessage);
-        var pts = vm.SavedTracks[0].Points;
+        var track = vm.SavedTracks[0];
+        var pts = track.Points;
         int corner = pts.FindIndex(p => Math.Abs(p.Easting) < 1e-9 && Math.Abs(p.Northing) < 1e-9);
         Assert.That(corner, Is.GreaterThan(0), "corner P0 (0,0) must be a curve point");
         // Before the corner: on the bottom side (N = 0, E > 0) moving toward P0; after: up the left side.
@@ -138,14 +156,20 @@ public class BoundaryPickRingTests
         Assert.That(pts[corner - 1].Easting, Is.EqualTo(DenseStep).Within(1e-9));
         Assert.That(pts[corner + 1].Easting, Is.EqualTo(0).Within(1e-9));
         Assert.That(pts[corner + 1].Northing, Is.EqualTo(DenseStep).Within(1e-9));
-        // Body = 6 bottom-side vertices (E = 9.375 … 1.5625) + P0 + 5 left-side (N = 1.5625 … 7.8125).
-        var body = pts.Where(p => (Math.Abs(p.Northing) < 1e-9 && p.Easting >= -1e-9 && p.Easting <= 6 * DenseStep + 1e-9)
-                               || (Math.Abs(p.Easting) < 1e-9 && p.Northing >= -1e-9 && p.Northing <= 5 * DenseStep + 1e-9)).ToList();
-        Assert.That(body, Has.Count.EqualTo(12));
-        Assert.That(body[0].Easting, Is.EqualTo(6 * DenseStep).Within(1e-9), "walk starts at ring index 250");
-        Assert.That(body[^1].Northing, Is.EqualTo(5 * DenseStep).Within(1e-9), "…and ends at index 5 (6 excluded, half-open)");
-        // Far smaller than the complement (244 body vertices + tails).
-        Assert.That(pts, Has.Count.LessThan(150));
+        // Body = A (10,0) + 6 bottom-side vertices (E = 9.375 … 1.5625) + P0 + 6 left-side
+        // (N = 1.5625 … 9.375) + B (0,10) = 15 points, 20 m.
+        var body = track.Body!;
+        Assert.That(body, Has.Count.EqualTo(15));
+        Assert.That(body[0].Easting, Is.EqualTo(10).Within(1e-9), "walk starts at anchor A (10,0)");
+        Assert.That(body[0].Northing, Is.EqualTo(0).Within(1e-9));
+        Assert.That(body[1].Easting, Is.EqualTo(6 * DenseStep).Within(1e-9));
+        Assert.That(body[^2].Northing, Is.EqualTo(6 * DenseStep).Within(1e-9));
+        Assert.That(body[^1].Easting, Is.EqualTo(0).Within(1e-9), "…and ends at anchor B (0,10)");
+        Assert.That(body[^1].Northing, Is.EqualTo(10).Within(1e-9));
+        Assert.That(track.AnchorA!.Value.Easting, Is.EqualTo(10).Within(1e-9));
+        Assert.That(track.AnchorB!.Value.Northing, Is.EqualTo(10).Within(1e-9));
+        // Far smaller than the complement (~245 body vertices + tails).
+        Assert.That(pts, Has.Count.LessThan(250));
     }
 
     // Seam symmetry: tapping the same two points in the other order gives the identical curve.
@@ -171,7 +195,7 @@ public class BoundaryPickRingTests
     // circle (0.87 m) is thinned by FixSpacing's < 0.9 × 1.1 m pass to 1.745 m, which is above
     // AOG's 1.6 m curve spacing, so MakePointMinimumSpacing must halve it. Body points (including
     // the inserted chord midpoints, sagitta 0.008 m) stay within 0.02 m of the circle; the
-    // straight tangent tails leave that band at their first 2 m step (0.04 m out).
+    // straight 1 m tangent tails leave that band by their second step (0.04 m out).
     [Test]
     public void CurveBody_IsDensifiedToAtMost1_6m()
     {
@@ -221,22 +245,27 @@ public class BoundaryPickRingTests
         Assert.That(checkedPts, Is.GreaterThan(80));
     }
 
-    // The straight tails are capped at AOG's 99 m (AddFirstLastPoints adds 1..99 m). On the
-    // square the curve's end tangent runs ALONG the bottom side, so the fence-crossing raycast
+    // The initial straight tails are capped at AOG's 99 m (AddFirstLastPoints adds 1..99 m). On
+    // the square the body's end tangent runs ALONG the bottom side, so the fence-crossing raycast
     // lands on the far corner 90 m away (+20 m margin = 110 m) — the cap holds it to 99 m.
     [Test]
     public void Tails_AreCappedAt99m()
     {
         var vm = BuildSquareVm();
-        vm.RemoteCreateBoundaryCurveSegment(1, 10, 10, 1); // body ends: (9.375, 0) … (0, 7.8125)
-        var pts = vm.SavedTracks[0].Points;
+        vm.RemoteCreateBoundaryCurveSegment(1, 10, 10, 1); // anchors: A (10, 0) … B (0, 10)
+        var track = vm.SavedTracks[0];
+        var pts = track.Points;
 
-        // A tail: backwards from (9.375, 0) = east along N = 0 → tip at E = 9.375 + 99.
+        Assert.That(track.TailA, Is.EqualTo(99));
+        Assert.That(track.TailB, Is.EqualTo(99));
+        // A tail: backwards from (10, 0) = east along N = 0 → tip at E = 10 + 99, 99 points at 1 m.
         Assert.That(pts[0].Northing, Is.EqualTo(0).Within(1e-9));
-        Assert.That(pts[0].Easting, Is.EqualTo(6 * DenseStep + 99).Within(1e-6));
-        // B tail: forwards from (0, 7.8125) = north along E = 0 → tip at N = 7.8125 + 99.
+        Assert.That(pts[0].Easting, Is.EqualTo(10 + 99).Within(1e-6));
+        Assert.That(pts[98].Easting, Is.EqualTo(11).Within(1e-6));
+        // B tail: forwards from (0, 10) = north along E = 0 → tip at N = 10 + 99.
         Assert.That(pts[^1].Easting, Is.EqualTo(0).Within(1e-9));
-        Assert.That(pts[^1].Northing, Is.EqualTo(5 * DenseStep + 99).Within(1e-6));
+        Assert.That(pts[^1].Northing, Is.EqualTo(10 + 99).Within(1e-6));
+        Assert.That(pts, Has.Count.EqualTo(99 + 15 + 99));
     }
 
     // (g) FixSpacing (the FixFenceLine port BuildPickRing runs): outer ring of a 1 ha square gets
@@ -285,35 +314,36 @@ public class BoundaryPickRingTests
         }
     }
 
-    // The trim buttons walk the SAME dense ring the curve was snapped on: on the sparse square
-    // the old raw ring made a 5 m step inert (the first ring segment was 100 m). Now A++ / B++
-    // move ≈ 5 m (3 × 1.5625 m = 4.69 m, the largest whole-vertex walk under the 5 m budget)
-    // along the side, A backwards and B forwards in fence winding.
+    // The tail buttons never touch the ring or the body: A++ on the sparse square adds 10 straight
+    // 1 m points south of anchor A (0, 30) along the side's line; the body's dense vertices are
+    // exactly the ones there before, and B's side is untouched.
     [Test]
-    public void TrimButtons_WalkTheDenseRing()
+    public void TailButtons_NeverMoveTheAnchorsOrBody()
     {
         var vm = BuildSquareVm();
-        vm.RemoteCreateBoundaryCurveSegment(1, 30, 1, 60); // half-open dense range [19, 38)
+        vm.RemoteCreateBoundaryCurveSegment(1, 30, 1, 60); // anchors (0,30) … (0,60)
         var track = vm.SavedTracks[0];
         string name = track.Name;
+        var bodyBefore = track.Body!.ToList();
         bool HasVertex(int i) => track.Points.Any(p => Math.Abs(p.Easting) < 1e-9 && Math.Abs(p.Northing - i * DenseStep) < 1e-9);
-        Assert.That(HasVertex(19), Is.True);
-        Assert.That(HasVertex(16), Is.False);
-        Assert.That(HasVertex(37), Is.True);
-        Assert.That(HasVertex(40), Is.False);
+        Assert.That(HasVertex(20), Is.True);
+        Assert.That(HasVertex(38), Is.True);
+        Assert.That(HasVertex(19), Is.False, "19 × 1.5625 = 29.69 is below anchor A — not a body vertex, and the 1 m tail never lands on it");
 
-        vm.RemoteBoundarySegExtend("A", 1);
+        vm.RemoteAdjustTail(isA: true, deltaMeters: 10);
 
         Assert.That(vm.SavedTracks[0], Is.SameAs(track));
-        Assert.That(vm.StatusMessage, Does.StartWith("A end extended 5 m"));
-        Assert.That(HasVertex(16), Is.True, "A walked 3 dense vertices south (19 → 16)");
-        Assert.That(HasVertex(15), Is.False);
-
-        vm.RemoteBoundarySegExtend("B", 1);
-
-        Assert.That(vm.StatusMessage, Does.StartWith("B end extended 5 m"));
-        Assert.That(HasVertex(40), Is.True, "B walked 3 dense vertices north (end 38 → 41, body to 40)");
-        Assert.That(HasVertex(41), Is.False);
-        Assert.That(track.Name, Is.EqualTo(name), "name is not recomputed on trim (AOG's A++/B++ don't either)");
+        Assert.That(vm.StatusMessage, Is.EqualTo("A end lengthened to 60 m past point A"));
+        Assert.That(track.Body, Has.Count.EqualTo(bodyBefore.Count));
+        for (int i = 0; i < bodyBefore.Count; i++)
+        {
+            Assert.That(track.Body![i].Easting, Is.EqualTo(bodyBefore[i].Easting).Within(1e-12));
+            Assert.That(track.Body![i].Northing, Is.EqualTo(bodyBefore[i].Northing).Within(1e-12));
+        }
+        Assert.That(track.AnchorA!.Value.Northing, Is.EqualTo(30).Within(1e-12));
+        Assert.That(track.Points[0].Northing, Is.EqualTo(30 - 60).Within(1e-9), "tip 60 m south of A");
+        Assert.That(track.Points[60].Northing, Is.EqualTo(30).Within(1e-9), "anchor A after 60 tail points");
+        Assert.That(track.Points.All(p => Math.Abs(p.Easting) < 1e-9), Is.True, "everything still on the side's line");
+        Assert.That(track.Name, Is.EqualTo(name), "name is not recomputed on a tail change (AOG's A++/B++ don't either)");
     }
 }

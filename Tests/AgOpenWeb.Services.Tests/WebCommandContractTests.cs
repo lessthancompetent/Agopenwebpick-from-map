@@ -140,4 +140,25 @@ public class WebCommandContractTests
             "these HTML buttons have no JavaScript handler path at all (no id reference, no data-cmd, " +
             "no dispatched class) — tapping them does nothing:\n  " + string.Join("\n  ", dead));
     }
+
+    /// <summary>
+    /// The operator's A/B-tail model replaced two earlier commands: the fence-walk trim
+    /// (track.boundarySegExtend — moved the anchors along the boundary; anchors are now
+    /// immovable) and the AOG-style straight run-out (track.extendEnd — subsumed by
+    /// track.tail). Neither may be sent by the client nor handled by the wiring any more.
+    /// </summary>
+    [Test]
+    public void RemovedTailCommands_AreNeitherSentNorHandled()
+    {
+        var root = RepoRoot();
+        var js = AppJs(root);
+        var wiring = WiringAll(root);
+        foreach (var id in new[] { "track.boundarySegExtend", "track.extendEnd" })
+        {
+            Assert.That(js, Does.Not.Contain(id), $"app.js still references removed command {id}");
+            Assert.That(wiring, Does.Not.Contain("\"" + id + "\""), $"wiring still handles removed command {id}");
+        }
+        Assert.That(SentIds(js), Does.Contain("track.tail"), "the four tail buttons send track.tail");
+        Assert.That(HandledIds(wiring).cases, Does.Contain("track.tail"));
+    }
 }

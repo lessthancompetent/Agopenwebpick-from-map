@@ -33,6 +33,107 @@ namespace AgOpenWeb.Services
     {
         private const string FileName = "TrackLines.txt";
         private const string Header = "$TrackLines";
+        /// <summary>Sidecar next to TrackLines.txt carrying what the AgOpenGPS format can't:
+        /// the fixed anchors + tail lengths of boundary-derived tracks (Track.AnchorA/B,
+        /// TailA/B). TrackLines.txt stays byte-compatible with AOG; entries are keyed by
+        /// list index AND name so a file AOG reordered can't attach anchors to the wrong track.</summary>
+        public const string MetaFileName = "Tracks.meta.json";
+
+        private sealed class TrackMetaFile
+        {
+            public int Version { get; set; } = 1;
+            public List<TrackMetaEntry> Tracks { get; set; } = new();
+        }
+
+        private sealed class TrackMetaEntry
+        {
+            public int Index { get; set; }
+            public string Name { get; set; } = string.Empty;
+            public double AnchorAE { get; set; }
+            public double AnchorAN { get; set; }
+            public double AnchorAH { get; set; }
+            public double AnchorBE { get; set; }
+            public double AnchorBN { get; set; }
+            public double AnchorBH { get; set; }
+            public double TailA { get; set; }
+            public double TailB { get; set; }
+        }
+
+        private static readonly System.Text.Json.JsonSerializerOptions MetaJsonOptions = new()
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+        };
+
+        /// <summary>A boundary AB line is persisted as its two tips only (endpointsOnly tails).</summary>
+        private static bool IsTwoPointLine(TrackModel t) => t.Type == TrackType.ABLine && t.Points.Count == 2;
+
+        private static void SaveMeta(string fieldDirectory, IReadOnlyList<TrackModel> tracks)
+        {
+            var metaPath = Path.Combine(fieldDirectory, MetaFileName);
+            var file = new TrackMetaFile();
+            for (int i = 0; i < tracks.Count; i++)
+            {
+                var t = tracks[i];
+                if (!t.HasAnchors) continue;
+                var a = t.AnchorA!.Value; var b = t.AnchorB!.Value;
+                file.Tracks.Add(new TrackMetaEntry
+                {
+                    Index = i, Name = t.Name ?? string.Empty,
+                    AnchorAE = a.Easting, AnchorAN = a.Northing, AnchorAH = a.Heading,
+                    AnchorBE = b.Easting, AnchorBN = b.Northing, AnchorBH = b.Heading,
+                    TailA = t.TailA, TailB = t.TailB,
+                });
+            }
+            if (file.Tracks.Count == 0)
+            {
+                // No anchored track → no sidecar, so a stale one can never mis-attach later.
+                if (File.Exists(metaPath)) File.Delete(metaPath);
+                return;
+            }
+            File.WriteAllText(metaPath, System.Text.Json.JsonSerializer.Serialize(file, MetaJsonOptions));
+        }
+
+        /// <summary>Attach anchors/tails/body from the sidecar to the tracks just read from
+        /// TrackLines.txt. Silently skips a missing/corrupt sidecar and any entry whose
+        /// index+name no longer match or whose recorded tails don't reproduce the file's
+        /// points (the track then simply has no anchors, like any other track).</summary>
+        private static void MergeMeta(string fieldDirectory, List<TrackModel> tracks)
+        {
+            var metaPath = Path.Combine(fieldDirectory, MetaFileName);
+            if (!File.Exists(metaPath)) return;
+            TrackMetaFile? file;
+            try
+            {
+                file = System.Text.Json.JsonSerializer.Deserialize<TrackMetaFile>(File.ReadAllText(metaPath), MetaJsonOptions);
+            }
+            catch
+            {
+                return;
+            }
+            if (file?.Tracks == null) return;
+            foreach (var m in file.Tracks)
+            {
+                if (m.Index < 0 || m.Index >= tracks.Count) continue;
+                var t = tracks[m.Index];
+                if (!string.Equals(t.Name, m.Name, StringComparison.Ordinal)) continue;
+                if (double.IsNaN(m.TailA) || double.IsNaN(m.TailB)) continue;
+                var a = new Vec3(m.AnchorAE, m.AnchorAN, m.AnchorAH);
+                var b = new Vec3(m.AnchorBE, m.AnchorBN, m.AnchorBH);
+                double tailA = Math.Max(0, m.TailA), tailB = Math.Max(0, m.TailB);
+                // TrackLines.txt rounds to 3 decimals → 0.01 m tolerance on the anchor match.
+                var body = TrackTails.RecoverBody(t.Points, a, b, tailA, tailB, IsTwoPointLine(t), tolerance: 0.01);
+                if (body == null) continue;
+                // The tail heading must survive the file round-trip: re-deriving it from the
+                // recovered body's end SEGMENT can fail after 3-decimal rounding (a sub-metre
+                // end segment yields a garbage bearing), so stamp the sidecar's saved anchor
+                // headings onto the body ends and let EndHeading prefer them (see TrackTails).
+                body[0] = new Vec3(body[0].Easting, body[0].Northing, m.AnchorAH);
+                body[^1] = new Vec3(body[^1].Easting, body[^1].Northing, m.AnchorBH);
+                t.AnchorA = a; t.AnchorB = b; t.TailA = tailA; t.TailB = tailB; t.Body = body;
+            }
+        }
 
         /// <summary>
         /// Map legacy TrackMode (file format) to TrackType (runtime model).
@@ -178,6 +279,7 @@ namespace AgOpenWeb.Services
                 }
             }
 
+            MergeMeta(fieldDirectory, result);
             return result;
         }
 
@@ -193,6 +295,7 @@ namespace AgOpenWeb.Services
 
             var filename = Path.Combine(fieldDirectory, FileName);
 
+            SaveMeta(fieldDirectory, tracks ?? Array.Empty<TrackModel>());
             using (var writer = new StreamWriter(filename, false))
             {
                 writer.WriteLine(Header);

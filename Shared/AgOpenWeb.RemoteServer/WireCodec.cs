@@ -446,6 +446,7 @@ public static class WireCodec
             WriteStr(w, ti.Type); // display label (Line/Curve/Path/Contour)
             w.Write((byte)(ti.Active ? 1 : 0));
             w.Write((byte)(ti.Visible ? 1 : 0));
+            w.Write((byte)(ti.Anchors ? 1 : 0)); // boundary AB/curve with fixed anchors → tail buttons
         }
 
         // Field Builder Headland-tab segment list — appended at the end of the Scene frame
