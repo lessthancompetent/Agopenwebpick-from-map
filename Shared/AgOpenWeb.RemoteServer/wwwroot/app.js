@@ -1785,7 +1785,10 @@ bottomNav.addEventListener('pointerdown', e => {
   e.stopPropagation(); // don't pan the map
   const btn = e.target.closest('button[data-cmd]');
   if (!btn) return;
-  if (btn.hasAttribute('data-t2') && !iHoldControl) return; // gated; host re-checks
+  // Gated; the host re-checks. Tell the operator WHY nothing happened instead of a
+  // silent no-op — Headland / Section-in-headland / skip-rows all sit here and an
+  // Observer tab (seat pinned elsewhere) read as "the button is broken".
+  if (btn.hasAttribute('data-t2') && !iHoldControl) { flashHint('Observer — tap the role badge (top) to take control'); return; }
   transport.send(btn.dataset.cmd);
 });
 // ---- On-screen U-Turn (yellow) / Lateral (cyan) buttons over the map ----
@@ -1801,6 +1804,22 @@ onScreenBtns.addEventListener('pointerdown', e => {
   // displayed track while the tractor stays committed to the executing arc, then
   // seek across after). Block them here with a hint instead of silently no-op'ing.
   if (tick && tick.op && tick.op.executing) { flashHint('Finish the U-turn first'); return; }
+  transport.send(btn.dataset.cmd);
+});
+// Fallback data-cmd dispatcher for buttons OUTSIDE the three container dispatchers
+// above (#simbar, bottomnav, onscreenbtns). Several panel buttons were authored with
+// data-cmd on the assumption it was global — autosteer "Send+Save" (autosteer.sendSave)
+// and the offset-fix D-pad (offset.north/south/east/west/zero) — but no dispatcher ever
+// reached them, so they did nothing. The containers above handle their own buttons
+// (and apply the data-t2 seat gate / mid-turn block), so skip anything inside them to
+// avoid double-firing. Tier-2 (data-t2) buttons here are gated the same way the
+// bottomnav is, with a hint rather than a silent swallow.
+document.addEventListener('pointerdown', e => {
+  const btn = e.target.closest('button[data-cmd]');
+  if (!btn) return;
+  if (btn.closest('#simbar') || btn.closest('#bottomnav') || btn.closest('#onscreenbtns')) return;
+  e.stopPropagation();
+  if (btn.hasAttribute('data-t2') && !iHoldControl) { flashHint('Observer — tap the role badge (top) to take control'); return; }
   transport.send(btn.dataset.cmd);
 });
 function applyOnScreenButtons() {
