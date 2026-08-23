@@ -45,9 +45,10 @@ public class ZeroWasLiveAngleTests
 
         vm.ZeroWasCommand.Execute(null);
 
-        // newOffset = old + round(angle × CPD) = 0 + round(−5.47 × 109) = −596
-        Assert.That(store.AutoSteer.WasOffset, Is.EqualTo(-596),
-            "zeroing must apply the live module angle, not the never-fed smoothed copy (0)");
+        // AgOpenGPS convention: newOffset = old + round(CPD × −angle)
+        //                                  = 0 + round(109 × −(−5.47)) = +596
+        Assert.That(store.AutoSteer.WasOffset, Is.EqualTo(596),
+            "zeroing must apply the NEGATED live module angle (AgOpenGPS FormSteer convention)");
     }
 
     [Test]
@@ -64,5 +65,25 @@ public class ZeroWasLiveAngleTests
 
         Assert.That(store.AutoSteer.WasOffset, Is.EqualTo(613),
             "with no live module data the offset must not be corrupted");
+    }
+
+    [Test]
+    public void ZeroWas_CorrectionCancelsTheAngle_NotDoublesIt()
+    {
+        // Regression for the sign bug: with +angle each press moved the reading FURTHER
+        // from zero (−5.8 → −13.4). With the AgOpenGPS −angle convention, applying the
+        // correction and then re-reading the module at 0° must leave the offset stable.
+        var (vm, store, steer) = Build(liveAngle: -5.84, age: TimeSpan.FromMilliseconds(50));
+        store.AutoSteer.CountsPerDegree = 107;
+        store.AutoSteer.WasOffset = 0;
+
+        vm.ZeroWasCommand.Execute(null);
+        int afterFirst = store.AutoSteer.WasOffset;
+        Assert.That(afterFirst, Is.EqualTo((int)Math.Round(107 * 5.84)), "offset moves by CPD×|angle| toward centre");
+
+        // Module now reports ~0° (sensor centred by the new offset): a second press is a no-op.
+        steer.LastSteerData.Returns(new SteerModuleData(0.0, 0, 0, false, false, false, false, 0));
+        vm.ZeroWasCommand.Execute(null);
+        Assert.That(store.AutoSteer.WasOffset, Is.EqualTo(afterFirst), "re-zeroing a centred sensor must not drift");
     }
 }

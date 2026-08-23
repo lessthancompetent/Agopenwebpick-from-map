@@ -442,8 +442,10 @@ public partial class AutoSteerConfigViewModel : ObservableObject
         ZeroWasCommand = new RelayCommand(() =>
         {
             // Calculate new WAS offset to make current angle read zero.
-            // Module formula: angle = (rawCounts - wasOffset) / countsPerDegree
-            // To zero: newOffset = currentOffset + (currentAngle * countsPerDegree)
+            // Matches AgOpenGPS FormSteer (the firmware convention the module expects):
+            //   wasOffset += countsPerDegree * -actualSteerAngle
+            // i.e. the correction is the NEGATED angle. The original port added +angle,
+            // so every press doubled the error instead of cancelling it (−5.8 → −13.4).
             //
             // Read the LIVE module angle from the steer service, not the panel's
             // smoothed copy. The smoothed value is only fed by OnUdpDataReceived,
@@ -453,7 +455,7 @@ public partial class AutoSteerConfigViewModel : ObservableObject
             double liveAngle = _autoSteerService is { } svc && svc.LastSteerDataAge < TimeSpan.FromSeconds(2)
                 ? svc.LastSteerData.ActualSteerAngle
                 : _smoothedActualAngle;
-            var angleCorrection = (int)Math.Round(liveAngle * AutoSteer.CountsPerDegree);
+            var angleCorrection = (int)Math.Round(-liveAngle * AutoSteer.CountsPerDegree);
             AutoSteer.WasOffset += angleCorrection;
             Config.MarkChanged();
 
