@@ -4,6 +4,7 @@
 // Licensed under GNU GPL v3. See LICENSE.md.
 
 using AgOpenWeb.Models.State;
+using Microsoft.Extensions.Logging;
 
 namespace AgOpenWeb.ViewModels;
 
@@ -25,11 +26,15 @@ public partial class MainViewModel
         }
 
         double km = warning.DistanceMeters / 1000.0;
-        ShowConfirmationDialog(
-            "GPS far from field",
-            $"GPS reports a position {km:F1} km from the loaded field origin. " +
-            "Autosteer has been disabled.\n\n" +
-            "Tap Yes to close the field, or No to keep driving without guidance.",
-            () => _ = CloseFieldAsync());
+        // The web UI is the only UI: a host-side ShowConfirmationDialog here was never
+        // answerable from the browser, so the operator saw nothing while
+        // State.UI.ActiveDialog stayed parked on Confirmation (which makes HandleHotkey
+        // bail until restart). The safety action — disengage — has already happened
+        // above; the rest is information. Surface it as a hint (StatusMessage reaches
+        // the tablet as a toast) and leave the field open: the operator can close it
+        // from Field Operations if they really are at the wrong paddock.
+        StatusMessage = $"GPS is {km:F1} km from the open field — autosteer disabled. " +
+                        "Close the field if you're at a different paddock.";
+        _logger.LogWarning("[OriginGuard] GPS {Km:F1} km from field origin — autosteer disengaged", km);
     }
 }
