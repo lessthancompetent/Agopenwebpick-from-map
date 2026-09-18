@@ -84,6 +84,14 @@ public class PgnChecksumTests
             Ackermann = 150
         }));
 
+        // Fork-only builders (not in upstream's fixture): keep the "every builder"
+        // fence honest for the PGNs this fork added.
+        yield return Case("BuildCorrectedPositionPgn", PgnBuilder.CORRECTED_POS_PGN_SIZE, () =>
+            PgnBuilder.BuildCorrectedPositionPgn(-37.9010123, 175.2913456));
+
+        yield return Case("BuildSectionDimensionsPgn", PgnBuilder.SECTION_DIMENSIONS_PGN_SIZE, () =>
+            PgnBuilder.BuildSectionDimensionsPgn(new AgOpenWeb.Models.Configuration.ToolConfig(), 8));
+
         // Our fork sends the stock 14-byte steer-config frame (len=8, bytes 10-12 zero);
         // the upstream 11-byte short form is rejected by firmware that checks the length byte.
         yield return Case("BuildSteerConfigPgn", 14, () => PgnBuilder.BuildSteerConfigPgn(new AutoSteerConfig
