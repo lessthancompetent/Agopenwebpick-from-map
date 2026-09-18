@@ -84,7 +84,9 @@ public class PgnChecksumTests
             Ackermann = 150
         }));
 
-        yield return Case("BuildSteerConfigPgn", 11, () => PgnBuilder.BuildSteerConfigPgn(new AutoSteerConfig
+        // Our fork sends the stock 14-byte steer-config frame (len=8, bytes 10-12 zero);
+        // the upstream 11-byte short form is rejected by firmware that checks the length byte.
+        yield return Case("BuildSteerConfigPgn", 14, () => PgnBuilder.BuildSteerConfigPgn(new AutoSteerConfig
         {
             InvertWas = true,
             DanfossEnabled = true,
